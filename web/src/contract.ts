@@ -2,16 +2,32 @@ import {
   createPublicClient,
   createWalletClient,
   custom,
+  decodeErrorResult,
   http,
   keccak256,
   toBytes,
   type Address,
   type EIP1193Provider,
+  type Hex,
 } from "viem";
 import { hardhat } from "viem/chains";
 import type { ChargeClient, CreateSessionRequest } from "./ChargingSessionPage";
 
 const abi = [
+  { type: "error", name: "UnknownChargingStation", inputs: [] },
+  { type: "error", name: "InactiveChargingStation", inputs: [] },
+  { type: "error", name: "ZeroTariff", inputs: [] },
+  { type: "error", name: "ZeroEnergy", inputs: [] },
+  { type: "error", name: "InvalidDeadline", inputs: [] },
+  {
+    type: "error",
+    name: "IncorrectFunding",
+    inputs: [
+      { name: "expected", type: "uint256" },
+      { name: "actual", type: "uint256" },
+    ],
+  },
+  { type: "error", name: "DuplicateChargingSession", inputs: [] },
   {
     type: "function",
     name: "getChargingStation",
@@ -67,16 +83,42 @@ declare global {
   }
 }
 
+function collectHexData(value: unknown, seen = new Set<unknown>()): Hex[] {
+  if (typeof value === "string") {
+    return [...value.matchAll(/0x[0-9a-fA-F]{8,}/g)].map(([match]) => match as Hex);
+  }
+  if (typeof value !== "object" || value === null || seen.has(value)) return [];
+  seen.add(value);
+  const record = value as Record<string, unknown>;
+  return ["data", "cause", "error", "details", "shortMessage", "message"]
+    .flatMap((key) => collectHexData(record[key], seen));
+}
+
+function decodedErrorName(reason: unknown) {
+  for (const data of collectHexData(reason)) {
+    try {
+      return decodeErrorResult({ abi, data }).errorName;
+    } catch {
+      // The candidate may be transaction calldata rather than revert data.
+    }
+  }
+  return undefined;
+}
+
 function friendlyError(reason: unknown) {
   const message = reason instanceof Error ? reason.message : String(reason);
   const knownErrors: Array<[string, string]> = [
+    ["UnknownChargingStation", "该 Charging Station 未登记"],
     ["DuplicateChargingSession", "该 Charging Session ID 已存在"],
     ["InactiveChargingStation", "该 Charging Station 当前不可用"],
+    ["ZeroTariff", "该 Charging Station 的 Tariff 无效"],
+    ["ZeroEnergy", "最大授权电量必须大于零"],
     ["IncorrectFunding", "出资金额必须准确等于 Maximum Payment"],
     ["InvalidDeadline", "截止时间必须晚于当前时间"],
     ["User rejected", "Driver 已取消钱包请求"],
   ];
-  return new Error(knownErrors.find(([name]) => message.includes(name))?.[1] ?? message);
+  const errorName = decodedErrorName(reason);
+  return new Error(knownErrors.find(([name]) => name === errorName || message.includes(name))?.[1] ?? message);
 }
 
 export async function createBrowserChargeClient(): Promise<ChargeClient> {
@@ -157,7 +199,19 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
           args: [sessionId],
         });
         if (session[8] !== 1) throw new Error("链上 Charging Session 未进入 Funded 状态");
-        return { hash, state: "Funded" };
+        return {
+          hash,
+          state: "Funded",
+          driver: session[0],
+          sessionId: request.sessionId,
+          stationId: request.stationId,
+          operator: session[2],
+          attestor: session[3],
+          tariff: session[4],
+          maxEnergyWh: session[5],
+          maximumPayment: session[6],
+          deadline: session[7],
+        };
       } catch (reason) {
         throw friendlyError(reason);
       }

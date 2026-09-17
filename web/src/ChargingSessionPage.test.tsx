@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { ChargingSessionPage, type ChargeClient } from "./ChargingSessionPage";
@@ -11,12 +11,26 @@ const station = {
   active: true,
 };
 
+const fundedSession = {
+  hash: "0xabc123",
+  state: "Funded" as const,
+  driver: "0x3333333333333333333333333333333333333333",
+  sessionId: "session-001",
+  stationId: station.id,
+  operator: station.operator,
+  attestor: station.attestor,
+  tariff: station.tariff,
+  maxEnergyWh: 20_000n,
+  maximumPayment: 20_000_000n,
+  deadline: 1_789_635_600n,
+};
+
 describe("Charging Session product interface", () => {
   it("shows locked terms before the Driver funds the Session", async () => {
     const client: ChargeClient = {
       loadStation: async () => station,
       connectWallet: async () => "0x3333333333333333333333333333333333333333",
-      createSession: async () => ({ hash: "0xabc", state: "Funded" }),
+      createSession: async () => fundedSession,
     };
 
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
@@ -35,7 +49,7 @@ describe("Charging Session product interface", () => {
     const client: ChargeClient = {
       loadStation: async () => station,
       connectWallet: async () => "0x3333333333333333333333333333333333333333",
-      createSession: async () => ({ hash: "0xabc123", state: "Funded" }),
+      createSession: async () => fundedSession,
     };
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
 
@@ -46,6 +60,12 @@ describe("Charging Session product interface", () => {
 
     expect(await screen.findByText("Funded")).toBeVisible();
     expect(screen.getByText("0xabc123")).toBeVisible();
+    const resultRegion = screen.getByRole("region", { name: "Charging Session 结果" });
+    expect(within(resultRegion).getByText("20,000 Wh")).toBeVisible();
+    expect(within(resultRegion).getByText("session-001")).toBeVisible();
+    expect(within(resultRegion).getByText(station.operator)).toBeVisible();
+    expect(within(resultRegion).getByText(station.attestor)).toBeVisible();
+    expect(within(resultRegion).getByText("20,000,000 wei")).toBeVisible();
   });
 
   it("shows a clear reason when funding is rejected", async () => {

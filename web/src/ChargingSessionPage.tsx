@@ -16,10 +16,19 @@ export type CreateSessionRequest = {
   maximumPayment: bigint;
 };
 
+export type FundedSession = CreateSessionRequest & {
+  hash: string;
+  state: "Funded";
+  driver: string;
+  operator: string;
+  attestor: string;
+  tariff: bigint;
+};
+
 export interface ChargeClient {
   loadStation(): Promise<ChargingStation>;
   connectWallet(): Promise<string>;
-  createSession(request: CreateSessionRequest): Promise<{ hash: string; state: "Funded" }>;
+  createSession(request: CreateSessionRequest): Promise<FundedSession>;
 }
 
 type Props = {
@@ -35,7 +44,7 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
   const [deadline, setDeadline] = useState(() =>
     new Date(now().getTime() + 60 * 60 * 1_000).toISOString().slice(0, 16),
   );
-  const [result, setResult] = useState<{ hash: string; state: "Funded" }>();
+  const [result, setResult] = useState<FundedSession>();
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
 
@@ -145,6 +154,18 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
         <section aria-label="Charging Session 结果">
           <h2>{result.state}</h2>
           <p>交易标识 <code>{result.hash}</code></p>
+          <h3>链上锁定条款</h3>
+          <dl>
+            <div><dt>Session</dt><dd>{result.sessionId}</dd></div>
+            <div><dt>Driver</dt><dd>{result.driver}</dd></div>
+            <div><dt>Station</dt><dd>{result.stationId}</dd></div>
+            <div><dt>Charging Operator</dt><dd>{result.operator}</dd></div>
+            <div><dt>Attestor</dt><dd>{result.attestor}</dd></div>
+            <div><dt>Tariff</dt><dd>{result.tariff.toLocaleString("en-US")} wei / Wh</dd></div>
+            <div><dt>最大授权电量</dt><dd>{result.maxEnergyWh.toLocaleString("en-US")} Wh</dd></div>
+            <div><dt>Maximum Payment</dt><dd>{result.maximumPayment.toLocaleString("en-US")} wei</dd></div>
+            <div><dt>截止时间</dt><dd>{new Date(Number(result.deadline) * 1_000).toLocaleString()}</dd></div>
+          </dl>
         </section>
       )}
     </main>
