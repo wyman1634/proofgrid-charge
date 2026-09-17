@@ -77,10 +77,37 @@ type Deployment = {
   stationId: string;
 };
 
+type InjectedProvider = EIP1193Provider & {
+  isMetaMask?: boolean;
+  providers?: InjectedProvider[];
+};
+
 declare global {
   interface Window {
-    ethereum?: EIP1193Provider;
+    ethereum?: InjectedProvider;
   }
+}
+
+async function selectInjectedProvider() {
+  const injected = window.ethereum;
+  let announcedMetaMask: InjectedProvider | undefined;
+  const handleAnnouncement = (event: Event) => {
+    const detail = (event as CustomEvent<{
+      info?: { name?: string; rdns?: string };
+      provider?: InjectedProvider;
+    }>).detail;
+    if (detail?.provider && (detail.info?.rdns === "io.metamask" || detail.info?.name === "MetaMask")) {
+      announcedMetaMask = detail.provider;
+    }
+  };
+  window.addEventListener("eip6963:announceProvider", handleAnnouncement);
+  window.dispatchEvent(new Event("eip6963:requestProvider"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  window.removeEventListener("eip6963:announceProvider", handleAnnouncement);
+
+  if (announcedMetaMask) return announcedMetaMask;
+  if (!injected) return undefined;
+  return injected.providers?.find((provider) => provider.isMetaMask) ?? injected;
 }
 
 function collectHexData(value: unknown, seen = new Set<unknown>()): Hex[] {
@@ -105,8 +132,34 @@ function decodedErrorName(reason: unknown) {
   return undefined;
 }
 
+function errorField(reason: unknown, field: "code" | "message", seen = new Set<unknown>()): unknown {
+  if (typeof reason !== "object" || reason === null || seen.has(reason)) return undefined;
+  seen.add(reason);
+  const record = reason as Record<string, unknown>;
+  if (record[field] !== undefined) return record[field];
+  for (const key of ["cause", "error", "data"]) {
+    const nested = errorField(record[key], field, seen);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
 function friendlyError(reason: unknown) {
-  const message = reason instanceof Error ? reason.message : String(reason);
+  const nestedMessage = errorField(reason, "message");
+  const message = reason instanceof Error
+    ? reason.message
+    : typeof nestedMessage === "string"
+      ? nestedMessage
+      : typeof reason === "string"
+        ? reason
+        : "钱包请求失败，请检查钱包状态";
+  const code = errorField(reason, "code");
+  const walletErrors = new Map<unknown, string>([
+    [4001, "Driver 已取消钱包请求"],
+    [4100, "钱包尚未授权，请重新连接"],
+    [4200, "当前钱包不支持切换本地网络，请在钱包中手动添加 Chain ID 31337"],
+  ]);
+  if (walletErrors.has(code)) return new Error(walletErrors.get(code));
   const knownErrors: Array<[string, string]> = [
     ["UnknownChargingStation", "该 Charging Station 未登记"],
     ["DuplicateChargingSession", "该 Charging Session ID 已存在"],
@@ -130,6 +183,7 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
     transport: http(deployment.rpcUrl),
   });
   let account: Address | undefined;
+  let walletProvider: InjectedProvider | undefined;
 
   return {
     async loadStation() {
@@ -143,11 +197,13 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
     },
 
     async connectWallet() {
-      if (!window.ethereum) throw new Error("请安装支持 EVM 的浏览器钱包");
-      const walletClient = createWalletClient({ chain: hardhat, transport: custom(window.ethereum) });
+      walletProvider = await selectInjectedProvider();
+      if (!walletProvider) throw new Error("请安装支持 EVM 的浏览器钱包");
+      const walletClient = createWalletClient({ chain: hardhat, transport: custom(walletProvider) });
       try {
+        [account] = await walletClient.requestAddresses();
         try {
-          await window.ethereum.request({
+          await walletProvider.request({
             method: "wallet_switchEthereumChain",
             params: [{ chainId: "0x7a69" }],
           });
@@ -156,7 +212,7 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
             ? switchReason.code
             : undefined;
           if (code !== 4902) throw switchReason;
-          await window.ethereum.request({
+          await walletProvider.request({
             method: "wallet_addEthereumChain",
             params: [{
               chainId: "0x7a69",
@@ -166,7 +222,6 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
             }],
           });
         }
-        [account] = await walletClient.requestAddresses();
         return account;
       } catch (reason) {
         throw friendlyError(reason);
@@ -174,8 +229,8 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
     },
 
     async createSession(request: CreateSessionRequest) {
-      if (!window.ethereum || !account) throw new Error("请先连接钱包");
-      const walletClient = createWalletClient({ chain: hardhat, transport: custom(window.ethereum) });
+      if (!walletProvider || !account) throw new Error("请先连接钱包");
+      const walletClient = createWalletClient({ chain: hardhat, transport: custom(walletProvider) });
       try {
         const sessionId = keccak256(toBytes(request.sessionId));
         const hash = await walletClient.writeContract({
