@@ -1,0 +1,10 @@
+artifacts/
+cache/
+node_modules/
+typechain-types/
+web/dist/
+web/public/deployment.json
+.env
+.env.*
+!.env.example
+*.log

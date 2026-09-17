@@ -1,0 +1,38 @@
+{
+  "name": "proofgrid-charge",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "build": "hardhat compile && vite build --config web/vite.config.ts",
+    "dev": "node scripts/dev.mjs",
+    "test": "npm run test:contract && npm run test:web && go test ./...",
+    "test:contract": "hardhat test test/contract/ProofGridCharge.test.ts",
+    "test:web": "vitest run --config web/vite.config.ts",
+    "typecheck": "npm run typecheck:contract && npm run typecheck:web",
+    "typecheck:contract": "tsc --noEmit -p tsconfig.hardhat.json",
+    "typecheck:web": "tsc --noEmit -p web/tsconfig.json"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "viem": "2.56.7"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "6.1.0",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.8",
+    "@types/react-dom": "19.2.3",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.1",
+    "@testing-library/user-event": "14.6.1",
+    "@vitejs/plugin-react": "6.0.1",
+    "hardhat": "2.29.1",
+    "jsdom": "27.4.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
+  }
+}
