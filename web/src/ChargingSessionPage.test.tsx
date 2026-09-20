@@ -129,4 +129,31 @@ describe("Charging Session product interface", () => {
     expect(within(resultRegion).getByText("0x4444444444444444444444444444444444444444")).toBeVisible();
     expect(within(resultRegion).getByText("0xsettled123")).toBeVisible();
   });
+
+  it("keeps the Charging Session Funded and explains a rejected tampered Attestation", async () => {
+    const user = userEvent.setup();
+    const settleSession = async (_session: typeof fundedSession, scenario?: string) => {
+      expect(scenario).toBe("tamperedActualEnergy");
+      throw new Error("Charging Attestation 无效或已被篡改");
+    };
+    const client: ChargeClient = {
+      loadStation: async () => station,
+      connectWallet: async () => "0x3333333333333333333333333333333333333333",
+      createSession: async () => fundedSession,
+      settleSession,
+    };
+    render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
+
+    await screen.findByText("station-fuji-001");
+    await user.click(screen.getByRole("button", { name: "连接钱包" }));
+    await user.type(screen.getByLabelText("Charging Session ID"), "session-001");
+    await user.click(screen.getByRole("button", { name: "准确出资并创建" }));
+    await screen.findByText("Funded");
+    await user.selectOptions(screen.getByLabelText("结算场景"), "tamperedActualEnergy");
+    await user.click(screen.getByRole("button", { name: "模拟并结算" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Charging Attestation 无效或已被篡改");
+    expect(screen.getByRole("heading", { name: "Funded" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Settled" })).not.toBeInTheDocument();
+  });
 });

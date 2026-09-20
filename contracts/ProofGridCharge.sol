@@ -11,6 +11,8 @@ contract ProofGridCharge {
     error DuplicateChargingSession();
     error InvalidSessionState();
     error InvalidAttestation();
+    error ExpiredAttestation();
+    error InvalidActualEnergy();
     error ValueTransferFailed();
 
     enum SessionState {
@@ -192,6 +194,7 @@ contract ProofGridCharge {
         if (settling) revert InvalidSessionState();
         ChargingSession storage session = chargingSessions[sessionId];
         if (session.state != SessionState.Funded) revert InvalidSessionState();
+        if (expiry <= block.timestamp) revert ExpiredAttestation();
         {
             bytes32 structHash = keccak256(
                 abi.encode(
@@ -211,6 +214,7 @@ contract ProofGridCharge {
             if (_recoverSigner(digest, signature) != session.attestor) revert InvalidAttestation();
         }
 
+        if (actualEnergyWh == 0 || actualEnergyWh > session.maxEnergyWh) revert InvalidActualEnergy();
         uint256 actualPayment = session.tariff * actualEnergyWh;
         uint256 driverRefund = session.maximumPayment - actualPayment;
 

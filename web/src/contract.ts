@@ -11,7 +11,7 @@ import {
   type Hex,
 } from "viem";
 import { hardhat } from "viem/chains";
-import type { ChargeClient, CreateSessionRequest, FundedSession } from "./ChargingSessionPage";
+import type { ChargeClient, CreateSessionRequest, FundedSession, SettlementScenario } from "./ChargingSessionPage";
 
 const abi = [
   { type: "error", name: "UnknownChargingStation", inputs: [] },
@@ -30,6 +30,8 @@ const abi = [
   { type: "error", name: "DuplicateChargingSession", inputs: [] },
   { type: "error", name: "InvalidSessionState", inputs: [] },
   { type: "error", name: "InvalidAttestation", inputs: [] },
+  { type: "error", name: "ExpiredAttestation", inputs: [] },
+  { type: "error", name: "InvalidActualEnergy", inputs: [] },
   {
     type: "function",
     name: "getChargingStation",
@@ -214,6 +216,9 @@ function friendlyError(reason: unknown) {
     ["ZeroEnergy", "最大授权电量必须大于零"],
     ["IncorrectFunding", "出资金额必须准确等于 Maximum Payment"],
     ["InvalidDeadline", "截止时间必须晚于当前时间"],
+    ["InvalidAttestation", "Charging Attestation 无效或已被篡改"],
+    ["ExpiredAttestation", "Charging Attestation 已过期"],
+    ["InvalidActualEnergy", "Actual Energy 必须大于零且不得超过最大授权电量"],
     ["User rejected", "Driver 已取消钱包请求"],
   ];
   const errorName = decodedErrorName(reason);
@@ -318,12 +323,14 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
       }
     },
 
-    async settleSession(session: FundedSession) {
+    async settleSession(session: FundedSession, scenario: SettlementScenario = "valid") {
       if (!walletProvider || !account) throw new Error("请先连接钱包");
       const walletClient = createWalletClient({ chain: hardhat, transport: custom(walletProvider) });
       const sessionId = keccak256(toBytes(session.sessionId));
       try {
-        const expiry = Math.floor(Date.now() / 1_000) + 30 * 60;
+        const expiry = scenario === "expiredAttestation"
+          ? Math.floor(Date.now() / 1_000) - 1
+          : Math.floor(Date.now() / 1_000) + 30 * 60;
         const attestationResponse = await fetch(
           `${deployment.attestorUrl ?? "http://127.0.0.1:8080"}/attestations`,
           {
@@ -333,8 +340,12 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
               sessionId,
               stationId: keccak256(toBytes(session.stationId)),
               chargingOperator: session.operator,
-              meterStartWh: 120_000,
-              meterEndWh: 138_400,
+              rawChargingData: {
+                sessionId,
+                stationId: keccak256(toBytes(session.stationId)),
+                meterStartWh: 120_000,
+                meterEndWh: 138_400,
+              },
               expiry,
               chainId: deployment.chainId,
               verifyingContract: deployment.contractAddress,
@@ -343,6 +354,12 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
         );
         if (!attestationResponse.ok) throw new Error("无法生成 Charging Attestation");
         const signed = (await attestationResponse.json()) as AttestationResponse;
+        const actualEnergyWh = scenario === "tamperedActualEnergy"
+          ? BigInt(signed.actualEnergyWh) + 1n
+          : BigInt(signed.actualEnergyWh);
+        const evidenceHash = scenario === "tamperedEvidenceHash"
+          ? keccak256(toBytes("tampered Charging Attestation data"))
+          : signed.evidenceHash;
         const settlementHash = await walletClient.writeContract({
           account,
           address: deployment.contractAddress,
@@ -350,8 +367,8 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
           functionName: "settleChargingSession",
           args: [
             sessionId,
-            BigInt(signed.actualEnergyWh),
-            signed.evidenceHash,
+            actualEnergyWh,
+            evidenceHash,
             BigInt(signed.attestation.expiry),
             signed.signature,
           ],

@@ -37,11 +37,17 @@ export type SettledSession = Omit<FundedSession, "state"> & {
   settledAt: bigint;
 };
 
+export type SettlementScenario =
+  | "valid"
+  | "tamperedActualEnergy"
+  | "tamperedEvidenceHash"
+  | "expiredAttestation";
+
 export interface ChargeClient {
   loadStation(): Promise<ChargingStation>;
   connectWallet(): Promise<string>;
   createSession(request: CreateSessionRequest): Promise<FundedSession>;
-  settleSession(session: FundedSession): Promise<SettledSession>;
+  settleSession(session: FundedSession, scenario?: SettlementScenario): Promise<SettledSession>;
 }
 
 type Props = {
@@ -61,6 +67,7 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [settling, setSettling] = useState(false);
+  const [settlementScenario, setSettlementScenario] = useState<SettlementScenario>("valid");
 
   useEffect(() => {
     client.loadStation().then(setStation).catch((reason: unknown) => {
@@ -109,7 +116,7 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
     setSettling(true);
     setError(undefined);
     try {
-      setResult(await client.settleSession(result));
+      setResult(await client.settleSession(result, settlementScenario));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Settlement 失败");
     } finally {
@@ -194,9 +201,23 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
             <div><dt>截止时间</dt><dd>{new Date(Number(result.deadline) * 1_000).toLocaleString()}</dd></div>
           </dl>
           {result.state === "Funded" ? (
-            <button type="button" disabled={settling} onClick={settle}>
-              {settling ? "结算中…" : "模拟并结算"}
-            </button>
+            <>
+              <label>
+                结算场景
+                <select
+                  value={settlementScenario}
+                  onChange={(event) => setSettlementScenario(event.target.value as SettlementScenario)}
+                >
+                  <option value="valid">正常 Charging Attestation</option>
+                  <option value="tamperedActualEnergy">篡改 Actual Energy</option>
+                  <option value="tamperedEvidenceHash">篡改 Evidence Hash</option>
+                  <option value="expiredAttestation">过期 Charging Attestation</option>
+                </select>
+              </label>
+              <button type="button" disabled={settling} onClick={settle}>
+                {settling ? "结算中…" : "模拟并结算"}
+              </button>
+            </>
           ) : (
             <>
               <h3>Charging Receipt</h3>

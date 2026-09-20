@@ -15,14 +15,13 @@ import (
 )
 
 type attestationRequest struct {
-	SessionID         string `json:"sessionId"`
-	StationID         string `json:"stationId"`
-	ChargingOperator  string `json:"chargingOperator"`
-	MeterStartWh      uint64 `json:"meterStartWh"`
-	MeterEndWh        uint64 `json:"meterEndWh"`
-	Expiry            uint64 `json:"expiry"`
-	ChainID           uint64 `json:"chainId"`
-	VerifyingContract string `json:"verifyingContract"`
+	SessionID         string          `json:"sessionId"`
+	StationID         string          `json:"stationId"`
+	ChargingOperator  string          `json:"chargingOperator"`
+	RawChargingData   rawChargingData `json:"rawChargingData"`
+	Expiry            uint64          `json:"expiry"`
+	ChainID           uint64          `json:"chainId"`
+	VerifyingContract string          `json:"verifyingContract"`
 }
 
 type rawChargingData struct {
@@ -120,14 +119,19 @@ func newHandler() http.Handler {
 			http.Error(response, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if input.MeterEndWh < input.MeterStartWh {
+		if input.RawChargingData.SessionID != input.SessionID {
+			http.Error(response, "raw charging data does not match requested Charging Session", http.StatusBadRequest)
+			return
+		}
+		if input.RawChargingData.StationID != input.StationID {
+			http.Error(response, "raw charging data does not match requested Charging Station", http.StatusBadRequest)
+			return
+		}
+		if input.RawChargingData.MeterEndWh < input.RawChargingData.MeterStartWh {
 			http.Error(response, "meter end must not be lower than meter start", http.StatusBadRequest)
 			return
 		}
-		record := rawChargingData{
-			SessionID: input.SessionID, StationID: input.StationID,
-			MeterStartWh: input.MeterStartWh, MeterEndWh: input.MeterEndWh,
-		}
+		record := input.RawChargingData
 		canonicalChargingData, err := json.Marshal(record)
 		if err != nil {
 			http.Error(response, "failed to encode raw charging data", http.StatusInternalServerError)
@@ -137,7 +141,7 @@ func newHandler() http.Handler {
 		attestation := chargingAttestation{
 			SessionID: input.SessionID, StationID: input.StationID,
 			ChargingOperator: input.ChargingOperator,
-			ActualEnergyWh:   input.MeterEndWh - input.MeterStartWh,
+			ActualEnergyWh:   record.MeterEndWh - record.MeterStartWh,
 			EvidenceHash:     evidenceHash, Expiry: input.Expiry,
 		}
 		signature, err := signAttestation(input, attestation)

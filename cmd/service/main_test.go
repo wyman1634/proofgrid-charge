@@ -13,8 +13,12 @@ const testAttestationRequest = `{
 	"sessionId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	"stationId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	"chargingOperator":"0x1111111111111111111111111111111111111111",
-	"meterStartWh":120000,
-	"meterEndWh":138400,
+	"rawChargingData":{
+		"sessionId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"stationId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"meterStartWh":120000,
+		"meterEndWh":138400
+	},
 	"expiry":1789635600,
 	"chainId":31337,
 	"verifyingContract":"0x2222222222222222222222222222222222222222"
@@ -107,8 +111,12 @@ func TestAttestationEndpointRejectsReversedMeterReadings(t *testing.T) {
 		"sessionId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"stationId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"chargingOperator":"0x1111111111111111111111111111111111111111",
-		"meterStartWh":138400,
-		"meterEndWh":120000,
+		"rawChargingData":{
+			"sessionId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"stationId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"meterStartWh":138400,
+			"meterEndWh":120000
+		},
 		"expiry":1789635600,
 		"chainId":31337,
 		"verifyingContract":"0x2222222222222222222222222222222222222222"
@@ -120,5 +128,53 @@ func TestAttestationEndpointRejectsReversedMeterReadings(t *testing.T) {
 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, response.Code, response.Body.String())
+	}
+}
+
+func TestAttestationEndpointRejectsRawChargingDataForAnotherSessionOrStation(t *testing.T) {
+	t.Setenv("PROOFGRID_ATTESTOR_PRIVATE_KEY", testAttestorPrivateKey)
+	tests := []struct {
+		name    string
+		payload string
+		message string
+	}{
+		{
+			name: "Session",
+			payload: `{
+				"sessionId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"stationId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				"chargingOperator":"0x1111111111111111111111111111111111111111",
+				"rawChargingData":{"sessionId":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","stationId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","meterStartWh":120000,"meterEndWh":138400},
+				"expiry":1789635600,"chainId":31337,"verifyingContract":"0x2222222222222222222222222222222222222222"
+			}`,
+			message: "raw charging data does not match requested Charging Session\n",
+		},
+		{
+			name: "Station",
+			payload: `{
+				"sessionId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"stationId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				"chargingOperator":"0x1111111111111111111111111111111111111111",
+				"rawChargingData":{"sessionId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","stationId":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","meterStartWh":120000,"meterEndWh":138400},
+				"expiry":1789635600,"chainId":31337,"verifyingContract":"0x2222222222222222222222222222222222222222"
+			}`,
+			message: "raw charging data does not match requested Charging Station\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/attestations", bytes.NewBufferString(test.payload))
+			response := httptest.NewRecorder()
+
+			newHandler().ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, response.Code, response.Body.String())
+			}
+			if response.Body.String() != test.message {
+				t.Fatalf("expected stable error %q, got %q", test.message, response.Body.String())
+			}
+		})
 	}
 }
