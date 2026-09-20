@@ -2,7 +2,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { ethers } from "hardhat";
 
 async function main() {
-  const [owner, , operator, attestor] = await ethers.getSigners();
+  const [owner, , operator] = await ethers.getSigners();
+  const attestorPrivateKey = process.env.PROOFGRID_ATTESTOR_PRIVATE_KEY;
+  if (!attestorPrivateKey) {
+    throw new Error("PROOFGRID_ATTESTOR_PRIVATE_KEY is required");
+  }
+  const attestor = new ethers.Wallet(attestorPrivateKey);
   const stationId = "station-fuji-001";
   const contract = await ethers.deployContract("ProofGridCharge", [owner.address]);
   await contract.waitForDeployment();
@@ -20,6 +25,7 @@ async function main() {
     chainId: 31_337,
     contractAddress: await contract.getAddress(),
     rpcUrl: "http://127.0.0.1:8545",
+    attestorUrl: "http://127.0.0.1:8080",
     stationId,
   };
   await mkdir("web/public", { recursive: true });

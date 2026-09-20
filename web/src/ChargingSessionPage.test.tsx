@@ -25,12 +25,26 @@ const fundedSession = {
   deadline: 1_789_635_600n,
 };
 
+const settledSession = {
+  ...fundedSession,
+  state: "Settled" as const,
+  settlementHash: "0xsettled123",
+  rawChargingData: "{\"meterStartWh\":120000,\"meterEndWh\":138400}",
+  evidenceHash: "0xevidence123",
+  actualEnergyWh: 18_400n,
+  actualPayment: 18_400_000n,
+  driverRefund: 1_600_000n,
+  relayer: "0x4444444444444444444444444444444444444444",
+  settledAt: 1_789_632_000n,
+};
+
 describe("Charging Session product interface", () => {
   it("shows locked terms before the Driver funds the Session", async () => {
     const client: ChargeClient = {
       loadStation: async () => station,
       connectWallet: async () => "0x3333333333333333333333333333333333333333",
       createSession: async () => fundedSession,
+      settleSession: async () => settledSession,
     };
 
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
@@ -50,6 +64,7 @@ describe("Charging Session product interface", () => {
       loadStation: async () => station,
       connectWallet: async () => "0x3333333333333333333333333333333333333333",
       createSession: async () => fundedSession,
+      settleSession: async () => settledSession,
     };
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
 
@@ -76,6 +91,7 @@ describe("Charging Session product interface", () => {
       createSession: async () => {
         throw new Error("该 Charging Session ID 已存在");
       },
+      settleSession: async () => settledSession,
     };
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
 
@@ -85,5 +101,32 @@ describe("Charging Session product interface", () => {
     await user.click(screen.getByRole("button", { name: "准确出资并创建" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("该 Charging Session ID 已存在");
+  });
+
+  it("shows the Settled result after simulating and submitting a Charging Attestation", async () => {
+    const user = userEvent.setup();
+    const client = {
+      loadStation: async () => station,
+      connectWallet: async () => "0x3333333333333333333333333333333333333333",
+      createSession: async () => fundedSession,
+      settleSession: async () => settledSession,
+    };
+    render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
+
+    await screen.findByText("station-fuji-001");
+    await user.click(screen.getByRole("button", { name: "连接钱包" }));
+    await user.type(screen.getByLabelText("Charging Session ID"), "session-001");
+    await user.click(screen.getByRole("button", { name: "准确出资并创建" }));
+    await screen.findByText("Funded");
+    await user.click(screen.getByRole("button", { name: "模拟并结算" }));
+
+    const resultRegion = await screen.findByRole("region", { name: "Charging Session 结果" });
+    expect(within(resultRegion).getByRole("heading", { name: "Settled" })).toBeVisible();
+    expect(within(resultRegion).getByText("18,400 Wh")).toBeVisible();
+    expect(within(resultRegion).getByText("18,400,000 wei")).toBeVisible();
+    expect(within(resultRegion).getByText("1,600,000 wei")).toBeVisible();
+    expect(within(resultRegion).getByText("0xevidence123")).toBeVisible();
+    expect(within(resultRegion).getByText("0x4444444444444444444444444444444444444444")).toBeVisible();
+    expect(within(resultRegion).getByText("0xsettled123")).toBeVisible();
   });
 });

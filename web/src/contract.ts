@@ -11,7 +11,7 @@ import {
   type Hex,
 } from "viem";
 import { hardhat } from "viem/chains";
-import type { ChargeClient, CreateSessionRequest } from "./ChargingSessionPage";
+import type { ChargeClient, CreateSessionRequest, FundedSession } from "./ChargingSessionPage";
 
 const abi = [
   { type: "error", name: "UnknownChargingStation", inputs: [] },
@@ -28,6 +28,8 @@ const abi = [
     ],
   },
   { type: "error", name: "DuplicateChargingSession", inputs: [] },
+  { type: "error", name: "InvalidSessionState", inputs: [] },
+  { type: "error", name: "InvalidAttestation", inputs: [] },
   {
     type: "function",
     name: "getChargingStation",
@@ -69,12 +71,56 @@ const abi = [
       { name: "state", type: "uint8" },
     ],
   },
+  {
+    type: "function",
+    name: "settleChargingSession",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "sessionId", type: "bytes32" },
+      { name: "actualEnergyWh", type: "uint256" },
+      { name: "evidenceHash", type: "bytes32" },
+      { name: "expiry", type: "uint256" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "getChargingReceipt",
+    stateMutability: "view",
+    inputs: [{ name: "sessionId", type: "bytes32" }],
+    outputs: [
+      { name: "driver", type: "address" },
+      { name: "stationId", type: "bytes32" },
+      { name: "operator", type: "address" },
+      { name: "attestor", type: "address" },
+      { name: "tariff", type: "uint256" },
+      { name: "actualEnergyWh", type: "uint256" },
+      { name: "actualPayment", type: "uint256" },
+      { name: "driverRefund", type: "uint256" },
+      { name: "evidenceHash", type: "bytes32" },
+      { name: "relayer", type: "address" },
+      { name: "settledAt", type: "uint256" },
+    ],
+  },
 ] as const;
 
 type Deployment = {
+  chainId: number;
   contractAddress: Address;
   rpcUrl: string;
   stationId: string;
+  attestorUrl?: string;
+};
+
+type AttestationResponse = {
+  rawChargingData: string;
+  evidenceHash: Hex;
+  actualEnergyWh: number;
+  attestation: {
+    expiry: number;
+  };
+  signature: Hex;
 };
 
 type InjectedProvider = EIP1193Provider & {
@@ -266,6 +312,77 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
           maxEnergyWh: session[5],
           maximumPayment: session[6],
           deadline: session[7],
+        };
+      } catch (reason) {
+        throw friendlyError(reason);
+      }
+    },
+
+    async settleSession(session: FundedSession) {
+      if (!walletProvider || !account) throw new Error("请先连接钱包");
+      const walletClient = createWalletClient({ chain: hardhat, transport: custom(walletProvider) });
+      const sessionId = keccak256(toBytes(session.sessionId));
+      try {
+        const expiry = Math.floor(Date.now() / 1_000) + 30 * 60;
+        const attestationResponse = await fetch(
+          `${deployment.attestorUrl ?? "http://127.0.0.1:8080"}/attestations`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              sessionId,
+              stationId: keccak256(toBytes(session.stationId)),
+              chargingOperator: session.operator,
+              meterStartWh: 120_000,
+              meterEndWh: 138_400,
+              expiry,
+              chainId: deployment.chainId,
+              verifyingContract: deployment.contractAddress,
+            }),
+          },
+        );
+        if (!attestationResponse.ok) throw new Error("无法生成 Charging Attestation");
+        const signed = (await attestationResponse.json()) as AttestationResponse;
+        const settlementHash = await walletClient.writeContract({
+          account,
+          address: deployment.contractAddress,
+          abi,
+          functionName: "settleChargingSession",
+          args: [
+            sessionId,
+            BigInt(signed.actualEnergyWh),
+            signed.evidenceHash,
+            BigInt(signed.attestation.expiry),
+            signed.signature,
+          ],
+        });
+        await publicClient.waitForTransactionReceipt({ hash: settlementHash });
+        const [chainSession, receipt] = await Promise.all([
+          publicClient.readContract({
+            address: deployment.contractAddress,
+            abi,
+            functionName: "getChargingSession",
+            args: [sessionId],
+          }),
+          publicClient.readContract({
+            address: deployment.contractAddress,
+            abi,
+            functionName: "getChargingReceipt",
+            args: [sessionId],
+          }),
+        ]);
+        if (chainSession[8] !== 2) throw new Error("链上 Charging Session 未进入 Settled 状态");
+        return {
+          ...session,
+          state: "Settled" as const,
+          settlementHash,
+          rawChargingData: signed.rawChargingData,
+          evidenceHash: receipt[8],
+          actualEnergyWh: receipt[5],
+          actualPayment: receipt[6],
+          driverRefund: receipt[7],
+          relayer: receipt[9],
+          settledAt: receipt[10],
         };
       } catch (reason) {
         throw friendlyError(reason);

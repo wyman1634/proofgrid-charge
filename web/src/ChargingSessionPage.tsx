@@ -25,10 +25,23 @@ export type FundedSession = CreateSessionRequest & {
   tariff: bigint;
 };
 
+export type SettledSession = Omit<FundedSession, "state"> & {
+  state: "Settled";
+  settlementHash: string;
+  rawChargingData: string;
+  evidenceHash: string;
+  actualEnergyWh: bigint;
+  actualPayment: bigint;
+  driverRefund: bigint;
+  relayer: string;
+  settledAt: bigint;
+};
+
 export interface ChargeClient {
   loadStation(): Promise<ChargingStation>;
   connectWallet(): Promise<string>;
   createSession(request: CreateSessionRequest): Promise<FundedSession>;
+  settleSession(session: FundedSession): Promise<SettledSession>;
 }
 
 type Props = {
@@ -44,9 +57,10 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
   const [deadline, setDeadline] = useState(() =>
     new Date(now().getTime() + 60 * 60 * 1_000).toISOString().slice(0, 16),
   );
-  const [result, setResult] = useState<FundedSession>();
+  const [result, setResult] = useState<FundedSession | SettledSession>();
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
+  const [settling, setSettling] = useState(false);
 
   useEffect(() => {
     client.loadStation().then(setStation).catch((reason: unknown) => {
@@ -87,6 +101,19 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
       setError(reason instanceof Error ? reason.message : "创建 Charging Session 失败");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function settle() {
+    if (!result || result.state !== "Funded") return;
+    setSettling(true);
+    setError(undefined);
+    try {
+      setResult(await client.settleSession(result));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Settlement 失败");
+    } finally {
+      setSettling(false);
     }
   }
 
@@ -153,7 +180,7 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
       {result && (
         <section aria-label="Charging Session 结果">
           <h2>{result.state}</h2>
-          <p>交易标识 <code>{result.hash}</code></p>
+          <p>交易标识 <code>{result.state === "Settled" ? result.settlementHash : result.hash}</code></p>
           <h3>链上锁定条款</h3>
           <dl>
             <div><dt>Session</dt><dd>{result.sessionId}</dd></div>
@@ -166,6 +193,27 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
             <div><dt>Maximum Payment</dt><dd>{result.maximumPayment.toLocaleString("en-US")} wei</dd></div>
             <div><dt>截止时间</dt><dd>{new Date(Number(result.deadline) * 1_000).toLocaleString()}</dd></div>
           </dl>
+          {result.state === "Funded" ? (
+            <button type="button" disabled={settling} onClick={settle}>
+              {settling ? "结算中…" : "模拟并结算"}
+            </button>
+          ) : (
+            <>
+              <h3>Charging Receipt</h3>
+              <dl>
+                <div><dt>Actual Energy</dt><dd>{result.actualEnergyWh.toLocaleString("en-US")} Wh</dd></div>
+                <div><dt>Operator Payment</dt><dd>{result.actualPayment.toLocaleString("en-US")} wei</dd></div>
+                <div><dt>Driver Refund</dt><dd>{result.driverRefund.toLocaleString("en-US")} wei</dd></div>
+                <div><dt>Evidence Hash</dt><dd><code>{result.evidenceHash}</code></dd></div>
+                <div><dt>Relayer</dt><dd>{result.relayer}</dd></div>
+                <div><dt>Settled At</dt><dd>{new Date(Number(result.settledAt) * 1_000).toLocaleString()}</dd></div>
+              </dl>
+              <details>
+                <summary>规范化原始充电记录</summary>
+                <pre>{result.rawChargingData}</pre>
+              </details>
+            </>
+          )}
         </section>
       )}
     </main>

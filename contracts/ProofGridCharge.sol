@@ -9,6 +9,9 @@ contract ProofGridCharge {
     error InvalidDeadline();
     error IncorrectFunding(uint256 expected, uint256 actual);
     error DuplicateChargingSession();
+    error InvalidSessionState();
+    error InvalidAttestation();
+    error ValueTransferFailed();
 
     enum SessionState {
         None,
@@ -37,10 +40,34 @@ contract ProofGridCharge {
         SessionState state;
     }
 
+    struct ChargingReceipt {
+        address driver;
+        bytes32 stationId;
+        address operator;
+        address attestor;
+        uint256 tariff;
+        uint256 actualEnergyWh;
+        uint256 actualPayment;
+        uint256 driverRefund;
+        bytes32 evidenceHash;
+        address relayer;
+        uint256 settledAt;
+    }
+
+    bytes32 private constant EIP712_DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    bytes32 private constant CHARGING_ATTESTATION_TYPEHASH = keccak256(
+        "ChargingAttestation(bytes32 sessionId,bytes32 stationId,address chargingOperator,uint256 actualEnergyWh,bytes32 evidenceHash,uint256 expiry)"
+    );
+    bytes32 private constant NAME_HASH = keccak256("ProofGrid Charge");
+    bytes32 private constant VERSION_HASH = keccak256("1");
+
     address public immutable owner;
 
     mapping(bytes32 stationId => ChargingStation) private chargingStations;
     mapping(bytes32 sessionId => ChargingSession) private chargingSessions;
+    mapping(bytes32 sessionId => ChargingReceipt) private chargingReceipts;
+    bool private settling;
 
     event ChargingStationConfigured(
         bytes32 indexed stationId,
@@ -54,6 +81,13 @@ contract ProofGridCharge {
         address indexed driver,
         bytes32 indexed stationId,
         uint256 maximumPayment
+    );
+    event ChargingSessionSettled(
+        bytes32 indexed sessionId,
+        address indexed relayer,
+        uint256 actualPayment,
+        uint256 driverRefund,
+        bytes32 evidenceHash
     );
 
     constructor(address initialOwner) {
@@ -146,5 +180,110 @@ contract ProofGridCharge {
             session.deadline,
             session.state
         );
+    }
+
+    function settleChargingSession(
+        bytes32 sessionId,
+        uint256 actualEnergyWh,
+        bytes32 evidenceHash,
+        uint256 expiry,
+        bytes calldata signature
+    ) external {
+        if (settling) revert InvalidSessionState();
+        ChargingSession storage session = chargingSessions[sessionId];
+        if (session.state != SessionState.Funded) revert InvalidSessionState();
+        {
+            bytes32 structHash = keccak256(
+                abi.encode(
+                    CHARGING_ATTESTATION_TYPEHASH,
+                    sessionId,
+                    session.stationId,
+                    session.operator,
+                    actualEnergyWh,
+                    evidenceHash,
+                    expiry
+                )
+            );
+            bytes32 domainSeparator = keccak256(
+                abi.encode(EIP712_DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(this))
+            );
+            bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+            if (_recoverSigner(digest, signature) != session.attestor) revert InvalidAttestation();
+        }
+
+        uint256 actualPayment = session.tariff * actualEnergyWh;
+        uint256 driverRefund = session.maximumPayment - actualPayment;
+
+        settling = true;
+        session.state = SessionState.Settled;
+        chargingReceipts[sessionId] = ChargingReceipt({
+            driver: session.driver,
+            stationId: session.stationId,
+            operator: session.operator,
+            attestor: session.attestor,
+            tariff: session.tariff,
+            actualEnergyWh: actualEnergyWh,
+            actualPayment: actualPayment,
+            driverRefund: driverRefund,
+            evidenceHash: evidenceHash,
+            relayer: msg.sender,
+            settledAt: block.timestamp
+        });
+
+        (bool operatorPaid,) = session.operator.call{value: actualPayment}("");
+        if (!operatorPaid) revert ValueTransferFailed();
+        (bool driverRefunded,) = session.driver.call{value: driverRefund}("");
+        if (!driverRefunded) revert ValueTransferFailed();
+        settling = false;
+
+        emit ChargingSessionSettled(sessionId, msg.sender, actualPayment, driverRefund, evidenceHash);
+    }
+
+    function getChargingReceipt(bytes32 sessionId)
+        external
+        view
+        returns (
+            address driver,
+            bytes32 stationId,
+            address operator,
+            address attestor,
+            uint256 tariff,
+            uint256 actualEnergyWh,
+            uint256 actualPayment,
+            uint256 driverRefund,
+            bytes32 evidenceHash,
+            address relayer,
+            uint256 settledAt
+        )
+    {
+        ChargingReceipt memory receipt = chargingReceipts[sessionId];
+        return (
+            receipt.driver,
+            receipt.stationId,
+            receipt.operator,
+            receipt.attestor,
+            receipt.tariff,
+            receipt.actualEnergyWh,
+            receipt.actualPayment,
+            receipt.driverRefund,
+            receipt.evidenceHash,
+            receipt.relayer,
+            receipt.settledAt
+        );
+    }
+
+    function _recoverSigner(bytes32 digest, bytes calldata signature) private pure returns (address signer) {
+        if (signature.length != 65) return address(0);
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := calldataload(signature.offset)
+            s := calldataload(add(signature.offset, 32))
+            v := byte(0, calldataload(add(signature.offset, 64)))
+        }
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) return address(0);
+        return ecrecover(digest, v, r, s);
     }
 }
