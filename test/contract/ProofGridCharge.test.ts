@@ -226,6 +226,134 @@ describe("Charging Session funding", function () {
   });
 });
 
+describe("Timeout Refund", function () {
+  it("rejects a Driver refund before the deadline without releasing the Maximum Payment", async function () {
+    const { contract, driver, stationId, currentTimestamp } = await configuredStation({
+      stationName: "timeout-refund-before-deadline",
+    });
+    const sessionId = ethers.id("session-timeout-refund-before-deadline");
+    const maximumPayment = 20_000_000n;
+    const deadline = BigInt(currentTimestamp + 3_600);
+
+    await contract
+      .connect(driver)
+      .createChargingSession(sessionId, stationId, 20_000n, deadline, { value: maximumPayment });
+
+    await expect(contract.connect(driver).timeoutRefund(sessionId))
+      .to.be.revertedWithCustomError(contract, "SessionNotExpired");
+
+    expect((await contract.getChargingSession(sessionId))[8]).to.equal(1n);
+    expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(maximumPayment);
+  });
+
+  it("only lets the Driver refund an expired Funded Session", async function () {
+    const { contract, driver, operator, stationId, currentTimestamp } = await configuredStation({
+      stationName: "timeout-refund-driver-only",
+    });
+    const sessionId = ethers.id("session-timeout-refund-driver-only");
+    const maximumPayment = 20_000_000n;
+    const deadline = BigInt(currentTimestamp + 3_600);
+
+    await contract
+      .connect(driver)
+      .createChargingSession(sessionId, stationId, 20_000n, deadline, { value: maximumPayment });
+    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(deadline + 1n)]);
+
+    await expect(contract.connect(operator).timeoutRefund(sessionId))
+      .to.be.revertedWithCustomError(contract, "UnauthorizedTimeoutRefund");
+    await expect(contract.connect(driver).timeoutRefund(sessionId))
+      .to.emit(contract, "ChargingSessionRefunded")
+      .withArgs(sessionId, driver.address, maximumPayment);
+
+    expect((await contract.getChargingSession(sessionId))[8]).to.equal(3n);
+    expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(0n);
+    expect((await contract.getChargingReceipt(sessionId))[0]).to.equal(ethers.ZeroAddress);
+  });
+
+  it("rejects a second Timeout Refund after the Session is Refunded", async function () {
+    const { contract, driver, operator, attestor, stationId, currentTimestamp } = await configuredStation({
+      stationName: "timeout-refund-once",
+    });
+    const sessionId = ethers.id("session-timeout-refund-once");
+    const deadline = BigInt(currentTimestamp + 3_600);
+
+    await contract
+      .connect(driver)
+      .createChargingSession(sessionId, stationId, 20_000n, deadline, { value: 20_000_000n });
+    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(deadline + 1n)]);
+    await contract.connect(driver).timeoutRefund(sessionId);
+
+    await expect(contract.connect(driver).timeoutRefund(sessionId))
+      .to.be.revertedWithCustomError(contract, "InvalidSessionState");
+
+    const [, , , , relayer] = await ethers.getSigners();
+    const expiry = deadline + 3_600n;
+    const evidenceHash = ethers.id("refunded-session-evidence");
+    const signature = await attestor.signTypedData(
+      {
+        name: "ProofGrid Charge",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await contract.getAddress(),
+      },
+      {
+        ChargingAttestation: [
+          { name: "sessionId", type: "bytes32" },
+          { name: "stationId", type: "bytes32" },
+          { name: "chargingOperator", type: "address" },
+          { name: "actualEnergyWh", type: "uint256" },
+          { name: "evidenceHash", type: "bytes32" },
+          { name: "expiry", type: "uint256" },
+        ],
+      },
+      { sessionId, stationId, chargingOperator: operator.address, actualEnergyWh: 18_400n, evidenceHash, expiry },
+    );
+    await expect(
+      contract.connect(relayer).settleChargingSession(sessionId, 18_400n, evidenceHash, expiry, signature),
+    ).to.be.revertedWithCustomError(contract, "InvalidSessionState");
+  });
+
+  it("rejects a Timeout Refund after Settlement", async function () {
+    const [owner, driver, operator, attestor, relayer] = await ethers.getSigners();
+    const contract = await deployProofGridCharge(owner);
+    const stationId = ethers.id("timeout-refund-after-settlement");
+    const sessionId = ethers.id("session-timeout-refund-after-settlement");
+    const timestamp = (await ethers.provider.getBlock("latest"))!.timestamp;
+    const deadline = BigInt(timestamp + 3_600);
+    const expiry = BigInt(timestamp + 1_800);
+    const evidenceHash = ethers.id("settled-session-evidence");
+
+    await contract.configureChargingStation(stationId, operator.address, attestor.address, 1_000n, true);
+    await contract
+      .connect(driver)
+      .createChargingSession(sessionId, stationId, 20_000n, deadline, { value: 20_000_000n });
+    const signature = await attestor.signTypedData(
+      {
+        name: "ProofGrid Charge",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await contract.getAddress(),
+      },
+      {
+        ChargingAttestation: [
+          { name: "sessionId", type: "bytes32" },
+          { name: "stationId", type: "bytes32" },
+          { name: "chargingOperator", type: "address" },
+          { name: "actualEnergyWh", type: "uint256" },
+          { name: "evidenceHash", type: "bytes32" },
+          { name: "expiry", type: "uint256" },
+        ],
+      },
+      { sessionId, stationId, chargingOperator: operator.address, actualEnergyWh: 18_400n, evidenceHash, expiry },
+    );
+    await contract.connect(relayer).settleChargingSession(sessionId, 18_400n, evidenceHash, expiry, signature);
+    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(deadline + 1n)]);
+
+    await expect(contract.connect(driver).timeoutRefund(sessionId))
+      .to.be.revertedWithCustomError(contract, "InvalidSessionState");
+  });
+});
+
 describe("Charging Session Settlement", function () {
   it("settles a Charging Attestation once and conserves the Maximum Payment", async function () {
     const [owner, driver, operator, attestor, relayer] = await ethers.getSigners();

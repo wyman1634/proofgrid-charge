@@ -37,6 +37,11 @@ export type SettledSession = Omit<FundedSession, "state"> & {
   settledAt: bigint;
 };
 
+export type RefundedSession = Omit<FundedSession, "state"> & {
+  state: "Refunded";
+  refundHash: string;
+};
+
 export type SettlementScenario =
   | "valid"
   | "tamperedActualEnergy"
@@ -48,6 +53,8 @@ export interface ChargeClient {
   connectWallet(): Promise<string>;
   createSession(request: CreateSessionRequest): Promise<FundedSession>;
   settleSession(session: FundedSession, scenario?: SettlementScenario): Promise<SettledSession>;
+  timeoutRefund(session: FundedSession): Promise<RefundedSession>;
+  getChainTimestamp(): Promise<bigint>;
 }
 
 type Props = {
@@ -69,10 +76,12 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
   const [deadline, setDeadline] = useState(() =>
     formatLocalDateTime(new Date(now().getTime() + 60 * 60 * 1_000)),
   );
-  const [result, setResult] = useState<FundedSession | SettledSession>();
+  const [result, setResult] = useState<FundedSession | SettledSession | RefundedSession>();
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [settling, setSettling] = useState(false);
+  const [refunding, setRefunding] = useState(false);
+  const [chainTimestamp, setChainTimestamp] = useState<bigint>();
   const [settlementScenario, setSettlementScenario] = useState<SettlementScenario>("valid");
 
   useEffect(() => {
@@ -129,6 +138,39 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
       setSettling(false);
     }
   }
+
+  async function refund() {
+    if (!result || result.state !== "Funded") return;
+    setRefunding(true);
+    setError(undefined);
+    try {
+      setResult(await client.timeoutRefund(result));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Timeout Refund 失败");
+    } finally {
+      setRefunding(false);
+    }
+  }
+
+  useEffect(() => {
+    if (result?.state !== "Funded") return;
+    let active = true;
+    const refreshChainTimestamp = () => {
+      client.getChainTimestamp().then((timestamp) => {
+        if (active) setChainTimestamp(timestamp);
+      }).catch(() => {
+        if (active) setChainTimestamp(undefined);
+      });
+    };
+    refreshChainTimestamp();
+    const interval = window.setInterval(refreshChainTimestamp, 15_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [client, result]);
+
+  const refundAvailable = chainTimestamp !== undefined && chainTimestamp > (result?.deadline ?? 0n);
 
   if (!station) {
     return <main>{error ? <p role="alert">{error}</p> : <p>正在加载 Charging Station…</p>}</main>;
@@ -193,7 +235,10 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
       {result && (
         <section aria-label="Charging Session 结果">
           <h2>{result.state}</h2>
-          <p>交易标识 <code>{result.state === "Settled" ? result.settlementHash : result.hash}</code></p>
+          <p>
+            {result.state === "Settled" ? "Settlement 交易哈希" : result.state === "Refunded" ? "Timeout Refund 交易哈希" : "创建交易哈希"}
+            {" "}<code>{result.state === "Settled" ? result.settlementHash : result.state === "Refunded" ? result.refundHash : result.hash}</code>
+          </p>
           <h3>链上锁定条款</h3>
           <dl>
             <div><dt>Session</dt><dd>{result.sessionId}</dd></div>
@@ -223,8 +268,15 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
               <button type="button" disabled={settling} onClick={settle}>
                 {settling ? "结算中…" : "模拟并结算"}
               </button>
+              {refundAvailable ? (
+                <button type="button" disabled={refunding} onClick={refund}>
+                  {refunding ? "退款中…" : "发起 Timeout Refund"}
+                </button>
+              ) : (
+                <p>Timeout Refund 将在截止时间后可用。</p>
+              )}
             </>
-          ) : (
+          ) : result.state === "Settled" ? (
             <>
               <h3>Charging Receipt</h3>
               <dl>
@@ -240,6 +292,8 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
                 <pre>{result.rawChargingData}</pre>
               </details>
             </>
+          ) : (
+            <p>全部 Maximum Payment 已退回 Driver；该 Charging Session 未生成 Charging Receipt。</p>
           )}
         </section>
       )}

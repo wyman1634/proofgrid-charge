@@ -29,6 +29,8 @@ const abi = [
   },
   { type: "error", name: "DuplicateChargingSession", inputs: [] },
   { type: "error", name: "SessionAlreadySettled", inputs: [] },
+  { type: "error", name: "UnauthorizedTimeoutRefund", inputs: [] },
+  { type: "error", name: "SessionNotExpired", inputs: [] },
   { type: "error", name: "InvalidSessionState", inputs: [] },
   { type: "error", name: "InvalidAttestation", inputs: [] },
   { type: "error", name: "ExpiredAttestation", inputs: [] },
@@ -85,6 +87,13 @@ const abi = [
       { name: "expiry", type: "uint256" },
       { name: "signature", type: "bytes" },
     ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "timeoutRefund",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "sessionId", type: "bytes32" }],
     outputs: [],
   },
   {
@@ -222,6 +231,8 @@ function friendlyError(reason: unknown) {
     ["ZeroEnergy", "最大授权电量必须大于零"],
     ["IncorrectFunding", "出资金额必须准确等于 Maximum Payment"],
     ["SessionAlreadySettled", "Charging Session 已完成结算，不能重复提交"],
+    ["UnauthorizedTimeoutRefund", "只有该 Charging Session 的 Driver 可以发起 Timeout Refund"],
+    ["SessionNotExpired", "Charging Session 尚未超过截止时间"],
     ["InvalidDeadline", "截止时间必须晚于当前时间"],
     ["InvalidAttestation", "Charging Attestation 无效或已被篡改"],
     ["ExpiredAttestation", "Charging Attestation 已过期"],
@@ -244,6 +255,10 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
   let walletProvider: InjectedProvider | undefined;
 
   return {
+    async getChainTimestamp() {
+      return BigInt((await publicClient.getBlock()).timestamp);
+    },
+
     async loadStation() {
       const [operator, attestor, tariff, active] = await publicClient.readContract({
         address: deployment.contractAddress,
@@ -408,6 +423,31 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
           relayer: receipt[9],
           settledAt: receipt[10],
         };
+      } catch (reason) {
+        throw friendlyError(reason);
+      }
+    },
+
+    async timeoutRefund(session: FundedSession) {
+      if (!walletProvider || !account) throw new Error("请先连接钱包");
+      const walletClient = createWalletClient({ chain: proofGridLocal, transport: custom(walletProvider) });
+      try {
+        const hash = await walletClient.writeContract({
+          account,
+          address: deployment.contractAddress,
+          abi,
+          functionName: "timeoutRefund",
+          args: [keccak256(toBytes(session.sessionId))],
+        });
+        await publicClient.waitForTransactionReceipt({ hash });
+        const chainSession = await publicClient.readContract({
+          address: deployment.contractAddress,
+          abi,
+          functionName: "getChargingSession",
+          args: [keccak256(toBytes(session.sessionId))],
+        });
+        if (chainSession[8] !== 3) throw new Error("链上 Charging Session 未进入 Refunded 状态");
+        return { ...session, state: "Refunded" as const, refundHash: hash };
       } catch (reason) {
         throw friendlyError(reason);
       }

@@ -10,6 +10,8 @@ contract ProofGridCharge {
     error IncorrectFunding(uint256 expected, uint256 actual);
     error DuplicateChargingSession();
     error SessionAlreadySettled();
+    error UnauthorizedTimeoutRefund();
+    error SessionNotExpired();
     error InvalidSessionState();
     error InvalidAttestation();
     error ExpiredAttestation();
@@ -92,6 +94,7 @@ contract ProofGridCharge {
         uint256 driverRefund,
         bytes32 evidenceHash
     );
+    event ChargingSessionRefunded(bytes32 indexed sessionId, address indexed driver, uint256 maximumPayment);
 
     constructor(address initialOwner) {
         owner = initialOwner;
@@ -245,6 +248,19 @@ contract ProofGridCharge {
         settling = false;
 
         emit ChargingSessionSettled(sessionId, msg.sender, actualPayment, driverRefund, evidenceHash);
+    }
+
+    function timeoutRefund(bytes32 sessionId) external {
+        ChargingSession storage session = chargingSessions[sessionId];
+        if (msg.sender != session.driver) revert UnauthorizedTimeoutRefund();
+        if (block.timestamp <= session.deadline) revert SessionNotExpired();
+        if (session.state != SessionState.Funded) revert InvalidSessionState();
+
+        session.state = SessionState.Refunded;
+        (bool refunded,) = session.driver.call{value: session.maximumPayment}("");
+        if (!refunded) revert ValueTransferFailed();
+
+        emit ChargingSessionRefunded(sessionId, session.driver, session.maximumPayment);
     }
 
     function getChargingReceipt(bytes32 sessionId)

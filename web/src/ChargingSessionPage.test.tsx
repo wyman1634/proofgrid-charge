@@ -38,6 +38,15 @@ const settledSession = {
   settledAt: 1_789_632_000n,
 };
 
+const refundedSession = {
+  ...fundedSession,
+  state: "Refunded" as const,
+  refundHash: "0xrefund123",
+};
+
+const beforeDeadline = async () => 1_000n;
+const afterDeadline = async () => 1_800_000_000n;
+
 describe("Charging Session product interface", () => {
   it("shows locked terms before the Driver funds the Session", async () => {
     const client: ChargeClient = {
@@ -45,6 +54,8 @@ describe("Charging Session product interface", () => {
       connectWallet: async () => "0x3333333333333333333333333333333333333333",
       createSession: async () => fundedSession,
       settleSession: async () => settledSession,
+      timeoutRefund: async () => refundedSession,
+      getChainTimestamp: beforeDeadline,
     };
 
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
@@ -69,6 +80,8 @@ describe("Charging Session product interface", () => {
         return fundedSession;
       },
       settleSession: async () => settledSession,
+      timeoutRefund: async () => refundedSession,
+      getChainTimestamp: beforeDeadline,
     };
 
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
@@ -88,6 +101,8 @@ describe("Charging Session product interface", () => {
       connectWallet: async () => "0x3333333333333333333333333333333333333333",
       createSession: async () => fundedSession,
       settleSession: async () => settledSession,
+      timeoutRefund: async () => refundedSession,
+      getChainTimestamp: beforeDeadline,
     };
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
 
@@ -115,6 +130,8 @@ describe("Charging Session product interface", () => {
         throw new Error("该 Charging Session ID 已存在");
       },
       settleSession: async () => settledSession,
+      timeoutRefund: async () => refundedSession,
+      getChainTimestamp: beforeDeadline,
     };
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
 
@@ -133,6 +150,8 @@ describe("Charging Session product interface", () => {
       connectWallet: async () => "0x3333333333333333333333333333333333333333",
       createSession: async () => fundedSession,
       settleSession: async () => settledSession,
+      timeoutRefund: async () => refundedSession,
+      getChainTimestamp: beforeDeadline,
     };
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
 
@@ -153,6 +172,34 @@ describe("Charging Session product interface", () => {
     expect(within(resultRegion).getByText("0xsettled123")).toBeVisible();
   });
 
+  it("lets the Driver request a Timeout Refund after the on-chain deadline", async () => {
+    const user = userEvent.setup();
+    let refunded = false;
+    const client = {
+      loadStation: async () => station,
+      connectWallet: async () => "0x3333333333333333333333333333333333333333",
+      createSession: async () => fundedSession,
+      settleSession: async () => settledSession,
+      timeoutRefund: async () => {
+        refunded = true;
+        return { ...fundedSession, state: "Refunded" as const, refundHash: "0xrefund123" };
+      },
+      getChainTimestamp: afterDeadline,
+    };
+    render(<ChargingSessionPage client={client} now={() => new Date("2027-01-01T00:00:00Z")} />);
+
+    await screen.findByText("station-fuji-001");
+    await user.click(screen.getByRole("button", { name: "连接钱包" }));
+    await user.type(screen.getByLabelText("Charging Session ID"), "session-001");
+    await user.click(screen.getByRole("button", { name: "准确出资并创建" }));
+    await user.click(await screen.findByRole("button", { name: "发起 Timeout Refund" }));
+
+    expect(refunded).toBe(true);
+    expect(await screen.findByRole("heading", { name: "Refunded" })).toBeVisible();
+    expect(screen.getByText("0xrefund123")).toBeVisible();
+    expect(screen.queryByText("Charging Receipt")).not.toBeInTheDocument();
+  });
+
   it("keeps the Charging Session Funded and explains a rejected tampered Attestation", async () => {
     const user = userEvent.setup();
     const settleSession = async (_session: typeof fundedSession, scenario?: string) => {
@@ -164,6 +211,8 @@ describe("Charging Session product interface", () => {
       connectWallet: async () => "0x3333333333333333333333333333333333333333",
       createSession: async () => fundedSession,
       settleSession,
+      timeoutRefund: async () => refundedSession,
+      getChainTimestamp: beforeDeadline,
     };
     render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
 
