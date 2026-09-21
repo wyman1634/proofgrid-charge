@@ -926,6 +926,57 @@ describe("Charging Session Settlement", function () {
     expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(contractBalance);
   });
 
+  it("settles a fully used Maximum Payment without calling a rejecting Driver for a zero refund", async function () {
+    const [owner, , operator, attestor, relayer] = await ethers.getSigners();
+    const rejectingDriver = await (await ethers.getContractFactory("RejectingDriver")).deploy();
+    const contract = await deployProofGridCharge(owner);
+    const stationId = ethers.id("station-zero-refund");
+    const sessionId = ethers.id("session-zero-refund");
+    const currentTimestamp = (await ethers.provider.getBlock("latest"))!.timestamp;
+    const deadline = BigInt(currentTimestamp + 3_600);
+    const expiry = BigInt(currentTimestamp + 1_800);
+    const evidenceHash = ethers.keccak256(ethers.toUtf8Bytes("zero refund charging record"));
+
+    await contract.configureChargingStation(stationId, operator.address, attestor.address, 1_000n, true);
+    await rejectingDriver.createChargingSession(
+      await contract.getAddress(),
+      sessionId,
+      stationId,
+      20_000n,
+      deadline,
+      { value: 20_000_000n },
+    );
+    const signature = await attestor.signTypedData(
+      {
+        name: "ProofGrid Charge",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await contract.getAddress(),
+      },
+      {
+        ChargingAttestation: [
+          { name: "sessionId", type: "bytes32" },
+          { name: "stationId", type: "bytes32" },
+          { name: "chargingOperator", type: "address" },
+          { name: "actualEnergyWh", type: "uint256" },
+          { name: "evidenceHash", type: "bytes32" },
+          { name: "expiry", type: "uint256" },
+        ],
+      },
+      { sessionId, stationId, chargingOperator: operator.address, actualEnergyWh: 20_000n, evidenceHash, expiry },
+    );
+    const operatorBalance = await ethers.provider.getBalance(operator.address);
+
+    await contract.connect(relayer).settleChargingSession(sessionId, 20_000n, evidenceHash, expiry, signature);
+
+    const receipt = await contract.getChargingReceipt(sessionId);
+    expect((await contract.getChargingSession(sessionId))[8]).to.equal(2n);
+    expect(receipt[6]).to.equal(20_000_000n);
+    expect(receipt[7]).to.equal(0n);
+    expect((await ethers.provider.getBalance(operator.address)) - operatorBalance).to.equal(20_000_000n);
+    expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(0n);
+  });
+
   it("records Settlement before an Operator reentrancy attempt and pays only once", async function () {
     const [owner, driver, , attestor, relayer] = await ethers.getSigners();
     const reenteringOperator = await (await ethers.getContractFactory("ReenteringOperator")).deploy();

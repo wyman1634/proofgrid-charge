@@ -238,8 +238,10 @@ contract ProofGridCharge {
 
         (bool operatorPaid,) = session.operator.call{value: actualPayment}("");
         if (!operatorPaid) revert ValueTransferFailed();
-        (bool driverRefunded,) = session.driver.call{value: driverRefund}("");
-        if (!driverRefunded) revert ValueTransferFailed();
+        if (driverRefund != 0) {
+            (bool driverRefunded,) = session.driver.call{value: driverRefund}("");
+            if (!driverRefunded) revert ValueTransferFailed();
+        }
         settling = false;
 
         emit ChargingSessionSettled(sessionId, msg.sender, actualPayment, driverRefund, evidenceHash);
