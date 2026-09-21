@@ -35,6 +35,7 @@ export type SettledSession = Omit<FundedSession, "state"> & {
   driverRefund: bigint;
   relayer: string;
   settledAt: bigint;
+  evidenceHashMatches?: boolean;
 };
 
 export type RefundedSession = Omit<FundedSession, "state"> & {
@@ -301,6 +302,9 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
                 <div><dt>Operator Payment</dt><dd>{result.actualPayment.toLocaleString("en-US")} wei</dd></div>
                 <div><dt>Driver Refund</dt><dd>{result.driverRefund.toLocaleString("en-US")} wei</dd></div>
                 <div><dt>Evidence Hash</dt><dd><code>{result.evidenceHash}</code></dd></div>
+                {result.evidenceHashMatches !== undefined && (
+                  <div><dt>Evidence Hash 复算</dt><dd>{result.evidenceHashMatches ? "与 Charging Receipt 一致" : "与 Charging Receipt 不一致"}</dd></div>
+                )}
                 <div><dt>Relayer</dt><dd>{result.relayer}</dd></div>
                 <div><dt>Settled At</dt><dd>{new Date(Number(result.settledAt) * 1_000).toLocaleString()}</dd></div>
               </dl>
@@ -308,6 +312,7 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
                 <summary>规范化原始充电记录</summary>
                 <pre>{result.rawChargingData}</pre>
               </details>
+              <p>链上证明 Attestor 签过该摘要且 Settlement 按锁定规则执行；不证明物理电表或 Attestor 绝对诚实。</p>
             </>
           ) : (
             <p>全部 Maximum Payment 已退回 Driver；该 Charging Session 未生成 Charging Receipt。</p>

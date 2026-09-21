@@ -36,6 +36,7 @@ const settledSession = {
   driverRefund: 1_600_000n,
   relayer: "0x4444444444444444444444444444444444444444",
   settledAt: 1_789_632_000n,
+  evidenceHashMatches: true,
 };
 
 const refundedSession = {
@@ -219,6 +220,29 @@ describe("Charging Session product interface", () => {
 
     expect(await screen.findByRole("heading", { name: "Refunded" })).toBeVisible();
     expect(screen.getByText("全部 Maximum Payment 已退回 Driver；该 Charging Session 未生成 Charging Receipt。")).toBeVisible();
+  });
+
+  it("lets a visitor verify a public Charging Receipt without connecting a wallet", async () => {
+    const user = userEvent.setup();
+    const client: ChargeClient = {
+      loadStation: async () => station,
+      connectWallet: async () => "0x3333333333333333333333333333333333333333",
+      createSession: async () => fundedSession,
+      settleSession: async () => settledSession,
+      timeoutRefund: async () => refundedSession,
+      getChainTimestamp: beforeDeadline,
+      lookupSession: async () => settledSession,
+    };
+    render(<ChargingSessionPage client={client} />);
+
+    await screen.findByText("station-fuji-001");
+    await user.type(screen.getByLabelText("Charging Session ID"), "settled-session");
+    await user.click(screen.getByRole("button", { name: "查询链上状态" }));
+
+    expect(await screen.findByRole("heading", { name: "Settled" })).toBeVisible();
+    expect(screen.getByText("Charging Receipt")).toBeVisible();
+    expect(screen.getByText("0xevidence123")).toBeVisible();
+    expect(screen.getByText("与 Charging Receipt 一致")).toBeVisible();
   });
 
   it("keeps the Charging Session Funded and explains a rejected tampered Attestation", async () => {
