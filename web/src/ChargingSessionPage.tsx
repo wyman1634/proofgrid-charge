@@ -55,13 +55,19 @@ type Props = {
   now?: () => Date;
 };
 
+function formatLocalDateTime(date: Date) {
+  const pad = (value: number) => value.toString().padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    + `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
   const [station, setStation] = useState<ChargingStation>();
   const [wallet, setWallet] = useState<string>();
   const [sessionId, setSessionId] = useState("");
   const [maxEnergyWh, setMaxEnergyWh] = useState("20000");
   const [deadline, setDeadline] = useState(() =>
-    new Date(now().getTime() + 60 * 60 * 1_000).toISOString().slice(0, 16),
+    formatLocalDateTime(new Date(now().getTime() + 60 * 60 * 1_000)),
   );
   const [result, setResult] = useState<FundedSession | SettledSession>();
   const [error, setError] = useState<string>();

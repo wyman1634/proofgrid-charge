@@ -55,7 +55,30 @@ describe("Charging Session product interface", () => {
     expect(screen.getByText("1,000 wei / Wh")).toBeVisible();
     expect(screen.getByLabelText("最大授权电量 (Wh)")).toHaveValue(20_000);
     expect(screen.getByText("20,000,000 wei")).toBeVisible();
-    expect(screen.getByLabelText("截止时间")).toHaveValue("2026-09-17T10:00");
+    expect(screen.getByLabelText("截止时间")).toHaveValue("2026-09-17T18:00");
+  });
+
+  it("submits a default deadline one hour after the Driver's current time", async () => {
+    const user = userEvent.setup();
+    let submittedDeadline: bigint | undefined;
+    const client: ChargeClient = {
+      loadStation: async () => station,
+      connectWallet: async () => "0x3333333333333333333333333333333333333333",
+      createSession: async (request) => {
+        submittedDeadline = request.deadline;
+        return fundedSession;
+      },
+      settleSession: async () => settledSession,
+    };
+
+    render(<ChargingSessionPage client={client} now={() => new Date("2026-09-17T09:00:00Z")} />);
+
+    await screen.findByText("station-fuji-001");
+    await user.click(screen.getByRole("button", { name: "连接钱包" }));
+    await user.type(screen.getByLabelText("Charging Session ID"), "future-deadline");
+    await user.click(screen.getByRole("button", { name: "准确出资并创建" }));
+
+    expect(submittedDeadline).toBe(1_789_639_200n);
   });
 
   it("shows the Funded state and transaction after exact funding succeeds", async () => {
