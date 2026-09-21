@@ -9,6 +9,7 @@ contract ProofGridCharge {
     error InvalidDeadline();
     error IncorrectFunding(uint256 expected, uint256 actual);
     error DuplicateChargingSession();
+    error SessionAlreadySettled();
     error InvalidSessionState();
     error InvalidAttestation();
     error ExpiredAttestation();
@@ -191,8 +192,9 @@ contract ProofGridCharge {
         uint256 expiry,
         bytes calldata signature
     ) external {
-        if (settling) revert InvalidSessionState();
         ChargingSession storage session = chargingSessions[sessionId];
+        if (session.state == SessionState.Settled) revert SessionAlreadySettled();
+        if (settling) revert InvalidSessionState();
         if (session.state != SessionState.Funded) revert InvalidSessionState();
         if (expiry <= block.timestamp) revert ExpiredAttestation();
         {

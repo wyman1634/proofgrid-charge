@@ -756,4 +756,229 @@ describe("Charging Session Settlement", function () {
       expect((await contract.getChargingReceipt(sessionId))[0]).to.equal(ethers.ZeroAddress);
     }
   });
+
+  it("rejects replaying either a same or different valid Attestation after Settlement", async function () {
+    const [owner, driver, operator, attestor, relayer] = await ethers.getSigners();
+    const contract = await deployProofGridCharge(owner);
+    const stationId = ethers.id("station-settlement-replay");
+    const sessionId = ethers.id("session-settlement-replay");
+    const currentTimestamp = (await ethers.provider.getBlock("latest"))!.timestamp;
+    const deadline = BigInt(currentTimestamp + 3_600);
+    const expiry = BigInt(currentTimestamp + 1_800);
+    const domain = {
+      name: "ProofGrid Charge",
+      version: "1",
+      chainId: (await ethers.provider.getNetwork()).chainId,
+      verifyingContract: await contract.getAddress(),
+    };
+    const types = {
+      ChargingAttestation: [
+        { name: "sessionId", type: "bytes32" },
+        { name: "stationId", type: "bytes32" },
+        { name: "chargingOperator", type: "address" },
+        { name: "actualEnergyWh", type: "uint256" },
+        { name: "evidenceHash", type: "bytes32" },
+        { name: "expiry", type: "uint256" },
+      ],
+    };
+    const firstEvidenceHash = ethers.keccak256(ethers.toUtf8Bytes("first valid charging record"));
+    const anotherEvidenceHash = ethers.keccak256(ethers.toUtf8Bytes("another valid charging record"));
+
+    await contract.configureChargingStation(stationId, operator.address, attestor.address, 1_000n, true);
+    await contract
+      .connect(driver)
+      .createChargingSession(sessionId, stationId, 20_000n, deadline, { value: 20_000_000n });
+    const firstSignature = await attestor.signTypedData(domain, types, {
+      sessionId,
+      stationId,
+      chargingOperator: operator.address,
+      actualEnergyWh: 18_400n,
+      evidenceHash: firstEvidenceHash,
+      expiry,
+    });
+    const anotherSignature = await attestor.signTypedData(domain, types, {
+      sessionId,
+      stationId,
+      chargingOperator: operator.address,
+      actualEnergyWh: 18_000n,
+      evidenceHash: anotherEvidenceHash,
+      expiry,
+    });
+
+    await contract
+      .connect(relayer)
+      .settleChargingSession(sessionId, 18_400n, firstEvidenceHash, expiry, firstSignature);
+
+    await expect(
+      contract.connect(relayer).settleChargingSession(sessionId, 18_400n, firstEvidenceHash, expiry, firstSignature),
+    ).to.be.revertedWithCustomError(contract, "SessionAlreadySettled");
+    await expect(
+      contract.connect(relayer).settleChargingSession(sessionId, 18_000n, anotherEvidenceHash, expiry, anotherSignature),
+    ).to.be.revertedWithCustomError(contract, "SessionAlreadySettled");
+  });
+
+  it("rolls back Settlement when the Charging Operator rejects payment", async function () {
+    const [owner, driver, , attestor, relayer] = await ethers.getSigners();
+    const rejectingReceiver = await (await ethers.getContractFactory("RejectingReceiver")).deploy();
+    const contract = await deployProofGridCharge(owner);
+    const stationId = ethers.id("station-rejecting-operator");
+    const sessionId = ethers.id("session-rejecting-operator");
+    const currentTimestamp = (await ethers.provider.getBlock("latest"))!.timestamp;
+    const deadline = BigInt(currentTimestamp + 3_600);
+    const expiry = BigInt(currentTimestamp + 1_800);
+    const evidenceHash = ethers.keccak256(ethers.toUtf8Bytes("rejecting operator charging record"));
+
+    await contract.configureChargingStation(
+      stationId,
+      await rejectingReceiver.getAddress(),
+      attestor.address,
+      1_000n,
+      true,
+    );
+    await contract
+      .connect(driver)
+      .createChargingSession(sessionId, stationId, 20_000n, deadline, { value: 20_000_000n });
+    const signature = await attestor.signTypedData(
+      {
+        name: "ProofGrid Charge",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await contract.getAddress(),
+      },
+      {
+        ChargingAttestation: [
+          { name: "sessionId", type: "bytes32" },
+          { name: "stationId", type: "bytes32" },
+          { name: "chargingOperator", type: "address" },
+          { name: "actualEnergyWh", type: "uint256" },
+          { name: "evidenceHash", type: "bytes32" },
+          { name: "expiry", type: "uint256" },
+        ],
+      },
+      { sessionId, stationId, chargingOperator: await rejectingReceiver.getAddress(), actualEnergyWh: 18_400n, evidenceHash, expiry },
+    );
+    const operatorBalance = await ethers.provider.getBalance(await rejectingReceiver.getAddress());
+    const driverBalance = await ethers.provider.getBalance(driver.address);
+    const contractBalance = await ethers.provider.getBalance(await contract.getAddress());
+
+    await expect(
+      contract.connect(relayer).settleChargingSession(sessionId, 18_400n, evidenceHash, expiry, signature),
+    ).to.be.revertedWithCustomError(contract, "ValueTransferFailed");
+
+    expect((await contract.getChargingSession(sessionId))[8]).to.equal(1n);
+    expect((await contract.getChargingReceipt(sessionId))[0]).to.equal(ethers.ZeroAddress);
+    expect(await ethers.provider.getBalance(await rejectingReceiver.getAddress())).to.equal(operatorBalance);
+    expect(await ethers.provider.getBalance(driver.address)).to.equal(driverBalance);
+    expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(contractBalance);
+  });
+
+  it("rolls back Settlement when the Driver rejects the unused-budget refund", async function () {
+    const [owner, , operator, attestor, relayer] = await ethers.getSigners();
+    const rejectingDriver = await (await ethers.getContractFactory("RejectingDriver")).deploy();
+    const contract = await deployProofGridCharge(owner);
+    const stationId = ethers.id("station-rejecting-driver");
+    const sessionId = ethers.id("session-rejecting-driver");
+    const currentTimestamp = (await ethers.provider.getBlock("latest"))!.timestamp;
+    const deadline = BigInt(currentTimestamp + 3_600);
+    const expiry = BigInt(currentTimestamp + 1_800);
+    const evidenceHash = ethers.keccak256(ethers.toUtf8Bytes("rejecting driver charging record"));
+
+    await contract.configureChargingStation(stationId, operator.address, attestor.address, 1_000n, true);
+    await rejectingDriver.createChargingSession(
+      await contract.getAddress(),
+      sessionId,
+      stationId,
+      20_000n,
+      deadline,
+      { value: 20_000_000n },
+    );
+    const signature = await attestor.signTypedData(
+      {
+        name: "ProofGrid Charge",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await contract.getAddress(),
+      },
+      {
+        ChargingAttestation: [
+          { name: "sessionId", type: "bytes32" },
+          { name: "stationId", type: "bytes32" },
+          { name: "chargingOperator", type: "address" },
+          { name: "actualEnergyWh", type: "uint256" },
+          { name: "evidenceHash", type: "bytes32" },
+          { name: "expiry", type: "uint256" },
+        ],
+      },
+      { sessionId, stationId, chargingOperator: operator.address, actualEnergyWh: 18_400n, evidenceHash, expiry },
+    );
+    const operatorBalance = await ethers.provider.getBalance(operator.address);
+    const driverBalance = await ethers.provider.getBalance(await rejectingDriver.getAddress());
+    const contractBalance = await ethers.provider.getBalance(await contract.getAddress());
+
+    await expect(
+      contract.connect(relayer).settleChargingSession(sessionId, 18_400n, evidenceHash, expiry, signature),
+    ).to.be.revertedWithCustomError(contract, "ValueTransferFailed");
+
+    expect((await contract.getChargingSession(sessionId))[8]).to.equal(1n);
+    expect((await contract.getChargingReceipt(sessionId))[0]).to.equal(ethers.ZeroAddress);
+    expect(await ethers.provider.getBalance(operator.address)).to.equal(operatorBalance);
+    expect(await ethers.provider.getBalance(await rejectingDriver.getAddress())).to.equal(driverBalance);
+    expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(contractBalance);
+  });
+
+  it("records Settlement before an Operator reentrancy attempt and pays only once", async function () {
+    const [owner, driver, , attestor, relayer] = await ethers.getSigners();
+    const reenteringOperator = await (await ethers.getContractFactory("ReenteringOperator")).deploy();
+    const contract = await deployProofGridCharge(owner);
+    const stationId = ethers.id("station-reentering-operator");
+    const sessionId = ethers.id("session-reentering-operator");
+    const currentTimestamp = (await ethers.provider.getBlock("latest"))!.timestamp;
+    const deadline = BigInt(currentTimestamp + 3_600);
+    const expiry = BigInt(currentTimestamp + 1_800);
+    const evidenceHash = ethers.keccak256(ethers.toUtf8Bytes("reentrancy charging record"));
+    const operatorAddress = await reenteringOperator.getAddress();
+
+    await contract.configureChargingStation(stationId, operatorAddress, attestor.address, 1_000n, true);
+    await contract
+      .connect(driver)
+      .createChargingSession(sessionId, stationId, 20_000n, deadline, { value: 20_000_000n });
+    const signature = await attestor.signTypedData(
+      {
+        name: "ProofGrid Charge",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await contract.getAddress(),
+      },
+      {
+        ChargingAttestation: [
+          { name: "sessionId", type: "bytes32" },
+          { name: "stationId", type: "bytes32" },
+          { name: "chargingOperator", type: "address" },
+          { name: "actualEnergyWh", type: "uint256" },
+          { name: "evidenceHash", type: "bytes32" },
+          { name: "expiry", type: "uint256" },
+        ],
+      },
+      { sessionId, stationId, chargingOperator: operatorAddress, actualEnergyWh: 18_400n, evidenceHash, expiry },
+    );
+    const settlementCall = contract.interface.encodeFunctionData("settleChargingSession", [
+      sessionId,
+      18_400n,
+      evidenceHash,
+      expiry,
+      signature,
+    ]);
+    await reenteringOperator.arm(await contract.getAddress(), settlementCall);
+
+    await contract.connect(relayer).settleChargingSession(sessionId, 18_400n, evidenceHash, expiry, signature);
+
+    expect(await reenteringOperator.attempted()).to.equal(true);
+    expect(await reenteringOperator.reentrySucceeded()).to.equal(false);
+    expect(await reenteringOperator.reentryResult()).to.equal(
+      contract.interface.encodeErrorResult("SessionAlreadySettled"),
+    );
+    expect((await contract.getChargingSession(sessionId))[8]).to.equal(2n);
+    expect((await contract.getChargingReceipt(sessionId))[6]).to.equal(18_400_000n);
+    expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(0n);
+  });
 });
