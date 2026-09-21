@@ -55,6 +55,7 @@ export interface ChargeClient {
   settleSession(session: FundedSession, scenario?: SettlementScenario): Promise<SettledSession>;
   timeoutRefund(session: FundedSession): Promise<RefundedSession>;
   getChainTimestamp(): Promise<bigint>;
+  lookupSession?(sessionId: string): Promise<FundedSession | SettledSession | RefundedSession | undefined>;
 }
 
 type Props = {
@@ -152,6 +153,18 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
     }
   }
 
+  async function lookup() {
+    setError(undefined);
+    try {
+      if (!client.lookupSession) throw new Error("当前客户端不支持链上状态查询");
+      const session = await client.lookupSession(sessionId);
+      if (!session) throw new Error("未找到该 Charging Session");
+      setResult(session);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "无法查询 Charging Session");
+    }
+  }
+
   useEffect(() => {
     if (result?.state !== "Funded") return;
     let active = true;
@@ -230,6 +243,10 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
           </>
         )}
       </form>
+
+      <button type="button" onClick={lookup} disabled={!sessionId}>
+        查询链上状态
+      </button>
 
       {error && <p role="alert">{error}</p>}
       {result && (

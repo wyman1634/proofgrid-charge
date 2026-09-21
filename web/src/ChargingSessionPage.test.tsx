@@ -200,6 +200,27 @@ describe("Charging Session product interface", () => {
     expect(screen.queryByText("Charging Receipt")).not.toBeInTheDocument();
   });
 
+  it("restores a Refunded Charging Session from its public Session ID without a wallet", async () => {
+    const user = userEvent.setup();
+    const client: ChargeClient = {
+      loadStation: async () => station,
+      connectWallet: async () => "0x3333333333333333333333333333333333333333",
+      createSession: async () => fundedSession,
+      settleSession: async () => settledSession,
+      timeoutRefund: async () => refundedSession,
+      getChainTimestamp: beforeDeadline,
+      lookupSession: async (sessionId) => sessionId === "refunded-session" ? refundedSession : undefined,
+    };
+    render(<ChargingSessionPage client={client} />);
+
+    await screen.findByText("station-fuji-001");
+    await user.type(screen.getByLabelText("Charging Session ID"), "refunded-session");
+    await user.click(screen.getByRole("button", { name: "查询链上状态" }));
+
+    expect(await screen.findByRole("heading", { name: "Refunded" })).toBeVisible();
+    expect(screen.getByText("全部 Maximum Payment 已退回 Driver；该 Charging Session 未生成 Charging Receipt。")).toBeVisible();
+  });
+
   it("keeps the Charging Session Funded and explains a rejected tampered Attestation", async () => {
     const user = userEvent.setup();
     const settleSession = async (_session: typeof fundedSession, scenario?: string) => {

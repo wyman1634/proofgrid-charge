@@ -259,6 +259,50 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
       return BigInt((await publicClient.getBlock()).timestamp);
     },
 
+    async lookupSession(sessionName: string) {
+      const session = await publicClient.readContract({
+        address: deployment.contractAddress,
+        abi,
+        functionName: "getChargingSession",
+        args: [keccak256(toBytes(sessionName))],
+      });
+      if (session[8] === 0) return undefined;
+      const fundedSession = {
+        hash: "链上查询未提供创建交易哈希",
+        driver: session[0],
+        sessionId: sessionName,
+        stationId: deployment.stationId,
+        operator: session[2],
+        attestor: session[3],
+        tariff: session[4],
+        maxEnergyWh: session[5],
+        maximumPayment: session[6],
+        deadline: session[7],
+      };
+      if (session[8] === 1) return { ...fundedSession, state: "Funded" as const };
+      if (session[8] === 3) {
+        return { ...fundedSession, state: "Refunded" as const, refundHash: "链上查询未提供退款交易哈希" };
+      }
+      const receipt = await publicClient.readContract({
+        address: deployment.contractAddress,
+        abi,
+        functionName: "getChargingReceipt",
+        args: [keccak256(toBytes(sessionName))],
+      });
+      return {
+        ...fundedSession,
+        state: "Settled" as const,
+        settlementHash: "链上查询未提供结算交易哈希",
+        rawChargingData: "公开原始充电记录仅在 Charging Receipt 验证页面提供",
+        evidenceHash: receipt[8],
+        actualEnergyWh: receipt[5],
+        actualPayment: receipt[6],
+        driverRefund: receipt[7],
+        relayer: receipt[9],
+        settledAt: receipt[10],
+      };
+    },
+
     async loadStation() {
       const [operator, attestor, tariff, active] = await publicClient.readContract({
         address: deployment.contractAddress,
