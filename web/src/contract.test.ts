@@ -14,7 +14,7 @@ describe("browser contract client", () => {
       vi.fn(async () =>
         new Response(
           JSON.stringify({
-            chainId: 31_337,
+            chainId: 1_337,
             contractAddress: "0x1111111111111111111111111111111111111111",
             rpcUrl: "http://127.0.0.1:8545",
             stationId: "station-fuji-001",
@@ -32,7 +32,7 @@ describe("browser contract client", () => {
       isMetaMask: true,
       request: vi.fn(async ({ method }: { method: string }) => {
         if (method === "wallet_switchEthereumChain") return null;
-        if (method === "eth_chainId") return "0x7a69";
+        if (method === "eth_chainId") return "0x539";
         if (method === "eth_requestAccounts") {
           return ["0x3333333333333333333333333333333333333333"];
         }
@@ -52,6 +52,10 @@ describe("browser contract client", () => {
       "0x3333333333333333333333333333333333333333",
     );
     expect(competingProvider.request).not.toHaveBeenCalled();
+    expect(metaMaskProvider.request).toHaveBeenCalledWith({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0x539" }],
+    });
   });
 
   it("uses the EIP-6963 MetaMask identity instead of a compatible wallet flag", async () => {
@@ -60,7 +64,7 @@ describe("browser contract client", () => {
       vi.fn(async () =>
         new Response(
           JSON.stringify({
-            chainId: 31_337,
+            chainId: 1_337,
             contractAddress: "0x1111111111111111111111111111111111111111",
             rpcUrl: "http://127.0.0.1:8545",
             stationId: "station-fuji-001",
@@ -82,7 +86,7 @@ describe("browser contract client", () => {
           return ["0x3333333333333333333333333333333333333333"];
         }
         if (method === "wallet_switchEthereumChain") return null;
-        if (method === "eth_chainId") return "0x7a69";
+        if (method === "eth_chainId") return "0x539";
         throw new Error(`unexpected MetaMask method: ${method}`);
       }),
     };
@@ -117,7 +121,7 @@ describe("browser contract client", () => {
       vi.fn(async () =>
         new Response(
           JSON.stringify({
-            chainId: 31_337,
+            chainId: 1_337,
             contractAddress: "0x1111111111111111111111111111111111111111",
             rpcUrl: "http://127.0.0.1:8545",
             stationId: "station-fuji-001",
@@ -136,7 +140,7 @@ describe("browser contract client", () => {
     const client = await createBrowserChargeClient();
 
     await expect(client.connectWallet()).rejects.toThrow(
-      "当前钱包不支持切换本地网络，请在钱包中手动添加 Chain ID 31337",
+      "当前钱包不支持切换本地网络，请在钱包中手动添加 Chain ID 1337",
     );
   });
 
@@ -146,7 +150,7 @@ describe("browser contract client", () => {
       vi.fn(async () =>
         new Response(
           JSON.stringify({
-            chainId: 31_337,
+            chainId: 1_337,
             contractAddress: "0x1111111111111111111111111111111111111111",
             rpcUrl: "http://127.0.0.1:8545",
             stationId: "station-fuji-001",
@@ -163,7 +167,7 @@ describe("browser contract client", () => {
           authorized = true;
           return ["0x3333333333333333333333333333333333333333"];
         }
-        if (method === "eth_chainId") return "0x7a69";
+        if (method === "eth_chainId") return "0x539";
         if (method === "wallet_switchEthereumChain") {
           if (!authorized) throw { code: 4100, message: "Unauthorized" };
           return null;
@@ -186,7 +190,7 @@ describe("browser contract client", () => {
       vi.fn(async () =>
         new Response(
           JSON.stringify({
-            chainId: 31_337,
+            chainId: 1_337,
             contractAddress: "0x1111111111111111111111111111111111111111",
             rpcUrl: "http://127.0.0.1:8545",
             stationId: "station-fuji-001",
@@ -198,7 +202,7 @@ describe("browser contract client", () => {
     const provider = {
       async request({ method }: { method: string }) {
         if (method === "wallet_switchEthereumChain") return null;
-        if (method === "eth_chainId") return "0x7a69";
+        if (method === "eth_chainId") return "0x539";
         if (method === "eth_requestAccounts") {
           return ["0x3333333333333333333333333333333333333333"];
         }

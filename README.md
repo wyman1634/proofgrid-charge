@@ -17,7 +17,7 @@ export PROOFGRID_ATTESTOR_PRIVATE_KEY=0xYOUR_DEMO_PRIVATE_KEY
 npm run dev
 ```
 
-打开 <http://127.0.0.1:5173>。浏览器钱包需连接本地网络（Chain ID `31337`，RPC `http://127.0.0.1:8545`）；应用会在连接时请求添加或切换网络。测试账户和余额由每次启动的临时 Hardhat 节点提供，仓库不保存私钥或其他秘密配置。
+打开 <http://127.0.0.1:5173>。浏览器钱包需连接本地网络（Chain ID `1337`，RPC `http://127.0.0.1:8545`）；应用会在连接时请求添加或切换网络。测试账户和余额由每次启动的临时 Hardhat 节点提供，仓库不保存私钥或其他秘密配置。
 
 `PROOFGRID_ATTESTOR_PRIVATE_KEY` 同时决定部署时锁定的 Attestor 地址与 Go 服务的签名身份。该值只从环境读取，不会写入部署文件或日志。Go 服务的健康检查位于 <http://127.0.0.1:8080/healthz>，Charging Attestation API 位于 `POST /attestations`。
 

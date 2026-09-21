@@ -10,7 +10,7 @@ import {
   type EIP1193Provider,
   type Hex,
 } from "viem";
-import { hardhat } from "viem/chains";
+import { localhost } from "viem/chains";
 import type { ChargeClient, CreateSessionRequest, FundedSession, SettlementScenario } from "./ChargingSessionPage";
 
 const abi = [
@@ -125,6 +125,11 @@ type AttestationResponse = {
   signature: Hex;
 };
 
+const proofGridLocal = {
+  ...localhost,
+  nativeCurrency: { name: "Test AVAX", symbol: "AVAX", decimals: 18 },
+};
+
 type InjectedProvider = EIP1193Provider & {
   isMetaMask?: boolean;
   providers?: InjectedProvider[];
@@ -205,7 +210,7 @@ function friendlyError(reason: unknown) {
   const walletErrors = new Map<unknown, string>([
     [4001, "Driver 已取消钱包请求"],
     [4100, "钱包尚未授权，请重新连接"],
-    [4200, "当前钱包不支持切换本地网络，请在钱包中手动添加 Chain ID 31337"],
+    [4200, "当前钱包不支持切换本地网络，请在钱包中手动添加 Chain ID 1337"],
   ]);
   if (walletErrors.has(code)) return new Error(walletErrors.get(code));
   const knownErrors: Array<[string, string]> = [
@@ -230,7 +235,7 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
   if (!deploymentResponse.ok) throw new Error("本地合约尚未部署，请运行 npm run dev");
   const deployment = (await deploymentResponse.json()) as Deployment;
   const publicClient = createPublicClient({
-    chain: hardhat,
+    chain: proofGridLocal,
     transport: http(deployment.rpcUrl),
   });
   let account: Address | undefined;
@@ -250,13 +255,13 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
     async connectWallet() {
       walletProvider = await selectInjectedProvider();
       if (!walletProvider) throw new Error("请安装支持 EVM 的浏览器钱包");
-      const walletClient = createWalletClient({ chain: hardhat, transport: custom(walletProvider) });
+      const walletClient = createWalletClient({ chain: proofGridLocal, transport: custom(walletProvider) });
       try {
         [account] = await walletClient.requestAddresses();
         try {
           await walletProvider.request({
             method: "wallet_switchEthereumChain",
-            params: [{ chainId: "0x7a69" }],
+            params: [{ chainId: "0x539" }],
           });
         } catch (switchReason) {
           const code = typeof switchReason === "object" && switchReason !== null && "code" in switchReason
@@ -266,7 +271,7 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
           await walletProvider.request({
             method: "wallet_addEthereumChain",
             params: [{
-              chainId: "0x7a69",
+              chainId: "0x539",
               chainName: "ProofGrid Local",
               nativeCurrency: { name: "Test AVAX", symbol: "AVAX", decimals: 18 },
               rpcUrls: [deployment.rpcUrl],
@@ -281,7 +286,7 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
 
     async createSession(request: CreateSessionRequest) {
       if (!walletProvider || !account) throw new Error("请先连接钱包");
-      const walletClient = createWalletClient({ chain: hardhat, transport: custom(walletProvider) });
+      const walletClient = createWalletClient({ chain: proofGridLocal, transport: custom(walletProvider) });
       try {
         const sessionId = keccak256(toBytes(request.sessionId));
         const hash = await walletClient.writeContract({
@@ -325,7 +330,7 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
 
     async settleSession(session: FundedSession, scenario: SettlementScenario = "valid") {
       if (!walletProvider || !account) throw new Error("请先连接钱包");
-      const walletClient = createWalletClient({ chain: hardhat, transport: custom(walletProvider) });
+      const walletClient = createWalletClient({ chain: proofGridLocal, transport: custom(walletProvider) });
       const sessionId = keccak256(toBytes(session.sessionId));
       try {
         const expiry = scenario === "expiredAttestation"

@@ -22,7 +22,7 @@ async function main() {
   ).wait();
 
   const deployment = {
-    chainId: 31_337,
+    chainId: Number((await ethers.provider.getNetwork()).chainId),
     contractAddress: await contract.getAddress(),
     rpcUrl: "http://127.0.0.1:8545",
     attestorUrl: "http://127.0.0.1:8080",
