@@ -226,6 +226,168 @@ describe("Charging Session funding", function () {
   });
 });
 
+describe("Charging Station configuration snapshots", function () {
+  it("uses the updated Station configuration only for new Sessions and settles each Session by its locked terms", async function () {
+    const [owner, driver, originalOperator, originalAttestor, nextOperator, nextAttestor, relayer] =
+      await ethers.getSigners();
+    const contract = await deployProofGridCharge(owner);
+    const contractAddress = await contract.getAddress();
+    const stationId = ethers.id("station-configuration-snapshot");
+    const originalTariff = 1_000n;
+    const nextTariff = 2_000n;
+    const originalSessionId = ethers.id("session-original-station-terms");
+    const nextSessionId = ethers.id("session-updated-station-terms");
+    const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp + 3_600);
+    const expiry = deadline - 1n;
+
+    await contract.configureChargingStation(
+      stationId,
+      originalOperator.address,
+      originalAttestor.address,
+      originalTariff,
+      true,
+    );
+    await expect(
+      contract.connect(driver).configureChargingStation(
+        stationId,
+        nextOperator.address,
+        nextAttestor.address,
+        nextTariff,
+        true,
+      ),
+    ).to.be.revertedWith("Only owner");
+    await contract.connect(driver).createChargingSession(
+      originalSessionId,
+      stationId,
+      100n,
+      deadline,
+      { value: 100_000n },
+    );
+
+    await contract.configureChargingStation(
+      stationId,
+      nextOperator.address,
+      nextAttestor.address,
+      nextTariff,
+      true,
+    );
+    await contract.connect(driver).createChargingSession(
+      nextSessionId,
+      stationId,
+      100n,
+      deadline,
+      { value: 200_000n },
+    );
+    await contract.configureChargingStation(
+      stationId,
+      nextOperator.address,
+      nextAttestor.address,
+      nextTariff,
+      false,
+    );
+
+    await expect(
+      contract.connect(driver).createChargingSession(
+        ethers.id("session-after-station-deactivation"),
+        stationId,
+        100n,
+        deadline,
+        { value: 200_000n },
+      ),
+    ).to.be.revertedWithCustomError(contract, "InactiveChargingStation");
+    expect(await contract.getChargingStation(stationId)).to.deep.equal([
+      nextOperator.address,
+      nextAttestor.address,
+      nextTariff,
+      false,
+    ]);
+    expect((await contract.getChargingSession(originalSessionId)).slice(2, 9)).to.deep.equal([
+      originalOperator.address,
+      originalAttestor.address,
+      originalTariff,
+      100n,
+      100_000n,
+      deadline,
+      1n,
+    ]);
+    expect((await contract.getChargingSession(nextSessionId)).slice(2, 9)).to.deep.equal([
+      nextOperator.address,
+      nextAttestor.address,
+      nextTariff,
+      100n,
+      200_000n,
+      deadline,
+      1n,
+    ]);
+
+    const domain = {
+      name: "ProofGrid Charge",
+      version: "1",
+      chainId: (await ethers.provider.getNetwork()).chainId,
+      verifyingContract: contractAddress,
+    };
+    const types = {
+      ChargingAttestation: [
+        { name: "sessionId", type: "bytes32" },
+        { name: "stationId", type: "bytes32" },
+        { name: "chargingOperator", type: "address" },
+        { name: "actualEnergyWh", type: "uint256" },
+        { name: "evidenceHash", type: "bytes32" },
+        { name: "expiry", type: "uint256" },
+      ],
+    };
+    const originalEvidenceHash = ethers.id("original-station-evidence");
+    const nextEvidenceHash = ethers.id("updated-station-evidence");
+    const originalSignature = await originalAttestor.signTypedData(domain, types, {
+      sessionId: originalSessionId,
+      stationId,
+      chargingOperator: originalOperator.address,
+      actualEnergyWh: 40n,
+      evidenceHash: originalEvidenceHash,
+      expiry,
+    });
+    const nextSignature = await nextAttestor.signTypedData(domain, types, {
+      sessionId: nextSessionId,
+      stationId,
+      chargingOperator: nextOperator.address,
+      actualEnergyWh: 50n,
+      evidenceHash: nextEvidenceHash,
+      expiry,
+    });
+    const rotatedAttestorSignature = await nextAttestor.signTypedData(domain, types, {
+      sessionId: originalSessionId,
+      stationId,
+      chargingOperator: originalOperator.address,
+      actualEnergyWh: 40n,
+      evidenceHash: originalEvidenceHash,
+      expiry,
+    });
+    const originalOperatorBalance = await ethers.provider.getBalance(originalOperator.address);
+    const nextOperatorBalance = await ethers.provider.getBalance(nextOperator.address);
+    const contractBalance = await ethers.provider.getBalance(contractAddress);
+
+    await expect(
+      contract
+        .connect(relayer)
+        .settleChargingSession(originalSessionId, 40n, originalEvidenceHash, expiry, rotatedAttestorSignature),
+    ).to.be.revertedWithCustomError(contract, "InvalidAttestation");
+    expect((await contract.getChargingSession(originalSessionId))[8]).to.equal(1n);
+    expect(await ethers.provider.getBalance(contractAddress)).to.equal(contractBalance);
+
+    await contract
+      .connect(relayer)
+      .settleChargingSession(originalSessionId, 40n, originalEvidenceHash, expiry, originalSignature);
+    await contract
+      .connect(relayer)
+      .settleChargingSession(nextSessionId, 50n, nextEvidenceHash, expiry, nextSignature);
+
+    expect((await ethers.provider.getBalance(originalOperator.address)) - originalOperatorBalance).to.equal(40_000n);
+    expect((await ethers.provider.getBalance(nextOperator.address)) - nextOperatorBalance).to.equal(100_000n);
+    expect((await contract.getChargingSession(originalSessionId))[8]).to.equal(2n);
+    expect((await contract.getChargingSession(nextSessionId))[8]).to.equal(2n);
+  });
+});
+
 describe("Timeout Refund", function () {
   it("rejects a Driver refund before the deadline without releasing the Maximum Payment", async function () {
     const { contract, driver, operator, stationId, currentTimestamp } = await configuredStation({

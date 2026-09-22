@@ -222,6 +222,43 @@ describe("Charging Session product interface", () => {
     expect(screen.getByText("全部 Maximum Payment 已退回 Driver；该 Charging Session 未生成 Charging Receipt。")).toBeVisible();
   });
 
+  it("distinguishes the current Charging Station configuration from a queried Session's locked terms", async () => {
+    const user = userEvent.setup();
+    const currentStation = {
+      ...station,
+      operator: "0x5555555555555555555555555555555555555555",
+      attestor: "0x6666666666666666666666666666666666666666",
+      tariff: 2_000n,
+    };
+    const lockedSession = {
+      ...fundedSession,
+      operator: station.operator,
+      attestor: station.attestor,
+      tariff: station.tariff,
+    };
+    const client: ChargeClient = {
+      loadStation: async () => currentStation,
+      connectWallet: async () => "0x3333333333333333333333333333333333333333",
+      createSession: async () => lockedSession,
+      settleSession: async () => settledSession,
+      timeoutRefund: async () => refundedSession,
+      getChainTimestamp: beforeDeadline,
+      lookupSession: async () => lockedSession,
+    };
+    render(<ChargingSessionPage client={client} />);
+
+    await screen.findByText("2,000 wei / Wh");
+    await user.type(screen.getByLabelText("Charging Session ID"), "original-station-terms");
+    await user.click(screen.getByRole("button", { name: "查询链上状态" }));
+
+    const resultRegion = await screen.findByRole("region", { name: "Charging Session 结果" });
+    expect(screen.getByText(currentStation.operator)).toBeVisible();
+    expect(screen.getByText(currentStation.attestor)).toBeVisible();
+    expect(within(resultRegion).getByText(station.operator)).toBeVisible();
+    expect(within(resultRegion).getByText(station.attestor)).toBeVisible();
+    expect(within(resultRegion).getByText("1,000 wei / Wh")).toBeVisible();
+  });
+
   it("lets a visitor verify a public Charging Receipt without connecting a wallet", async () => {
     const user = userEvent.setup();
     const client: ChargeClient = {
