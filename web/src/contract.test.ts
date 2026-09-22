@@ -402,4 +402,52 @@ describe("browser contract client", () => {
       deadline: 1_789_635_600n,
     })).rejects.toThrow("Charging Session 尚未超过截止时间");
   });
+
+  it("translates a Session that was settled before a Timeout Refund into a Driver-readable reason", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            chainId: 1_337,
+            contractAddress: "0x1111111111111111111111111111111111111111",
+            rpcUrl: "http://127.0.0.1:8545",
+            stationId: "station-fuji-001",
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const provider = {
+      async request({ method }: { method: string }) {
+        if (method === "wallet_switchEthereumChain") return null;
+        if (method === "eth_chainId") return "0x539";
+        if (method === "eth_requestAccounts") return ["0x3333333333333333333333333333333333333333"];
+        if (method === "eth_sendTransaction") {
+          throw Object.assign(new Error("execution reverted"), {
+            data: toFunctionSelector("InvalidSessionState()"),
+          });
+        }
+        throw new Error(`unexpected MetaMask method: ${method}`);
+      },
+    } as unknown as EIP1193Provider;
+    Object.defineProperty(window, "ethereum", { configurable: true, value: provider });
+
+    const client = await createBrowserChargeClient();
+    await client.connectWallet();
+
+    await expect(client.timeoutRefund({
+      hash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+      state: "Funded",
+      driver: "0x3333333333333333333333333333333333333333",
+      sessionId: "settled-before-refund",
+      stationId: "station-fuji-001",
+      operator: "0x2222222222222222222222222222222222222222",
+      attestor: "0x4444444444444444444444444444444444444444",
+      tariff: 1_000n,
+      maxEnergyWh: 20_000n,
+      maximumPayment: 20_000_000n,
+      deadline: 1_789_635_600n,
+    })).rejects.toThrow("Charging Session 已不再处于可退款状态");
+  });
 });

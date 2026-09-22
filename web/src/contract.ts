@@ -265,6 +265,7 @@ function friendlyError(reason: unknown) {
     ["SessionAlreadySettled", "Charging Session 已完成结算，不能重复提交"],
     ["UnauthorizedTimeoutRefund", "只有该 Charging Session 的 Driver 可以发起 Timeout Refund"],
     ["SessionNotExpired", "Charging Session 尚未超过截止时间"],
+    ["InvalidSessionState", "Charging Session 已不再处于可退款状态"],
     ["InvalidDeadline", "截止时间必须晚于当前时间"],
     ["InvalidAttestation", "Charging Attestation 无效或已被篡改"],
     ["ExpiredAttestation", "Charging Attestation 已过期"],

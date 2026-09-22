@@ -228,7 +228,7 @@ describe("Charging Session funding", function () {
 
 describe("Timeout Refund", function () {
   it("rejects a Driver refund before the deadline without releasing the Maximum Payment", async function () {
-    const { contract, driver, stationId, currentTimestamp } = await configuredStation({
+    const { contract, driver, operator, stationId, currentTimestamp } = await configuredStation({
       stationName: "timeout-refund-before-deadline",
     });
     const sessionId = ethers.id("session-timeout-refund-before-deadline");
@@ -238,12 +238,15 @@ describe("Timeout Refund", function () {
     await contract
       .connect(driver)
       .createChargingSession(sessionId, stationId, 20_000n, deadline, { value: maximumPayment });
+    const operatorBalance = await ethers.provider.getBalance(operator.address);
 
     await expect(contract.connect(driver).timeoutRefund(sessionId))
       .to.be.revertedWithCustomError(contract, "SessionNotExpired");
 
     expect((await contract.getChargingSession(sessionId))[8]).to.equal(1n);
     expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(maximumPayment);
+    expect(await ethers.provider.getBalance(operator.address)).to.equal(operatorBalance);
+    expect((await contract.getChargingReceipt(sessionId))[0]).to.equal(ethers.ZeroAddress);
   });
 
   it("only lets the Driver refund an expired Funded Session", async function () {
@@ -258,14 +261,19 @@ describe("Timeout Refund", function () {
       .connect(driver)
       .createChargingSession(sessionId, stationId, 20_000n, deadline, { value: maximumPayment });
     await ethers.provider.send("evm_setNextBlockTimestamp", [Number(deadline + 1n)]);
+    const driverBalanceBefore = await ethers.provider.getBalance(driver.address);
 
     await expect(contract.connect(operator).timeoutRefund(sessionId))
       .to.be.revertedWithCustomError(contract, "UnauthorizedTimeoutRefund");
-    await expect(contract.connect(driver).timeoutRefund(sessionId))
+    const refundTransaction = await contract.connect(driver).timeoutRefund(sessionId);
+    await expect(refundTransaction)
       .to.emit(contract, "ChargingSessionRefunded")
       .withArgs(sessionId, driver.address, maximumPayment);
+    const receipt = await refundTransaction.wait();
 
     expect((await contract.getChargingSession(sessionId))[8]).to.equal(3n);
+    const refundGas = receipt!.gasUsed * receipt!.gasPrice;
+    expect((await ethers.provider.getBalance(driver.address)) - driverBalanceBefore + refundGas).to.equal(maximumPayment);
     expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(0n);
     expect((await contract.getChargingReceipt(sessionId))[0]).to.equal(ethers.ZeroAddress);
   });
