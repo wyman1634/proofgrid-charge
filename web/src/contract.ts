@@ -164,6 +164,10 @@ const proofGridLocal = {
   nativeCurrency: { name: "Test AVAX", symbol: "AVAX", decimals: 18 },
 };
 
+function stationIdBytes(value: string): Hex {
+  return /^0x[\da-fA-F]{64}$/.test(value) ? value as Hex : keccak256(toBytes(value));
+}
+
 function transactionUrl(chainId: number, hash: Hex) {
   return chainId === 43_113 ? `https://testnet.snowtrace.io/tx/${hash}` : undefined;
 }
@@ -443,6 +447,7 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
       if (!walletProvider || !account) throw new Error("请先连接钱包");
       const walletClient = createWalletClient({ chain: proofGridLocal, transport: custom(walletProvider) });
       const sessionId = keccak256(toBytes(session.sessionId));
+      const stationId = stationIdBytes(session.stationId);
       try {
         const simulatedActualEnergyWh = session.maxEnergyWh < 18_400n
           ? session.maxEnergyWh
@@ -457,11 +462,11 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               sessionId,
-              stationId: keccak256(toBytes(session.stationId)),
+              stationId,
               chargingOperator: session.operator,
               rawChargingData: {
                 sessionId,
-                stationId: keccak256(toBytes(session.stationId)),
+                stationId,
                 meterStartWh: 120_000,
                 meterEndWh: 120_000 + Number(simulatedActualEnergyWh),
               },

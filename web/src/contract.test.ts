@@ -295,10 +295,15 @@ describe("browser contract client", () => {
   });
 
   it("caps simulated Charging Attestation energy at the Driver's authorized maximum", async () => {
+    const chainStationId = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       if (String(input).includes("/attestations")) {
         const rawChargingData = JSON.parse(String(init?.body)).rawChargingData;
-        expect(rawChargingData).toMatchObject({ meterStartWh: 120_000, meterEndWh: 121_000 });
+        expect(rawChargingData).toMatchObject({
+          stationId: chainStationId,
+          meterStartWh: 120_000,
+          meterEndWh: 121_000,
+        });
         return new Response(
           JSON.stringify({
             rawChargingData: JSON.stringify(rawChargingData),
@@ -340,7 +345,7 @@ describe("browser contract client", () => {
       state: "Funded",
       driver: "0x3333333333333333333333333333333333333333",
       sessionId: "small-authorization",
-      stationId: "station-fuji-001",
+      stationId: chainStationId,
       operator: "0x2222222222222222222222222222222222222222",
       attestor: "0x4444444444444444444444444444444444444444",
       tariff: 1_000n,
