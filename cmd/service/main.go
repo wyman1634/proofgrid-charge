@@ -49,6 +49,9 @@ type chargingAttestation struct {
 	Expiry           uint64 `json:"expiry"`
 }
 
+const demoMeterStartWh uint64 = 120_000
+const demoMeterEndWh uint64 = 138_400
+
 func keccak256Hex(value []byte) string {
 	hash := sha3.NewLegacyKeccak256()
 	_, _ = hash.Write(value)
@@ -106,6 +109,25 @@ func signAttestation(input attestationRequest, attestation chargingAttestation) 
 	return fmt.Sprintf("0x%x", signature), nil
 }
 
+func validateFujiAttestation(input attestationRequest) error {
+	if os.Getenv("PROOFGRID_DEPLOYMENT_MODE") != "fuji" {
+		return nil
+	}
+	if input.ChainID != 43113 {
+		return fmt.Errorf("Fuji Attestor only signs chain ID 43113")
+	}
+	if input.VerifyingContract == "" || !strings.EqualFold(input.VerifyingContract, os.Getenv("PROOFGRID_VERIFYING_CONTRACT")) {
+		return fmt.Errorf("verifying contract is not the configured Fuji contract")
+	}
+	if input.StationID == "" || !strings.EqualFold(input.StationID, os.Getenv("PROOFGRID_STATION_ID")) {
+		return fmt.Errorf("Charging Station is not configured for this Fuji Attestor")
+	}
+	if input.ChargingOperator == "" || !strings.EqualFold(input.ChargingOperator, os.Getenv("PROOFGRID_CHARGING_OPERATOR")) {
+		return fmt.Errorf("Charging Operator is not configured for this Fuji Attestor")
+	}
+	return nil
+}
+
 func newHandler() http.Handler {
 	mux := http.NewServeMux()
 	var recordsMu sync.RWMutex
@@ -134,7 +156,16 @@ func newHandler() http.Handler {
 			http.Error(response, "meter end must not be lower than meter start", http.StatusBadRequest)
 			return
 		}
-		record := input.RawChargingData
+		if err := validateFujiAttestation(input); err != nil {
+			http.Error(response, err.Error(), http.StatusForbidden)
+			return
+		}
+		record := rawChargingData{
+			SessionID: input.SessionID,
+			StationID: input.StationID,
+			MeterStartWh: demoMeterStartWh,
+			MeterEndWh: demoMeterEndWh,
+		}
 		canonicalChargingData, err := json.Marshal(record)
 		if err != nil {
 			http.Error(response, "failed to encode raw charging data", http.StatusInternalServerError)
@@ -188,12 +219,19 @@ func newHandler() http.Handler {
 }
 
 func main() {
-	address := os.Getenv("PROOFGRID_SERVICE_ADDRESS")
-	if address == "" {
-		address = ":8080"
-	}
+	address := serviceAddress()
 	log.Printf("ProofGrid Charge Go service listening on %s", address)
 	if err := http.ListenAndServe(address, newHandler()); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func serviceAddress() string {
+	if address := os.Getenv("PROOFGRID_SERVICE_ADDRESS"); address != "" {
+		return address
+	}
+	if port := os.Getenv("PORT"); port != "" {
+		return ":" + port
+	}
+	return ":8080"
 }

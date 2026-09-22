@@ -140,8 +140,39 @@ describe("browser contract client", () => {
     const client = await createBrowserChargeClient();
 
     await expect(client.connectWallet()).rejects.toThrow(
-      "当前钱包不支持切换本地网络，请在钱包中手动添加 Chain ID 1337",
+      "当前钱包不支持切换 ProofGrid 所需网络，请在钱包中手动添加对应 Chain ID",
     );
+  });
+
+  it("switches MetaMask to Avalanche Fuji for a Fuji deployment", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({
+        chainId: 43_113,
+        contractAddress: "0x1111111111111111111111111111111111111111",
+        rpcUrl: "https://api.avax-test.network/ext/bc/C/rpc",
+        attestorUrl: "https://proofgrid-charge-attestor.onrender.com",
+        stationId: "station-fuji-001",
+      }), { status: 200 })),
+    );
+    const provider = {
+      isMetaMask: true,
+      request: vi.fn(async ({ method }: { method: string }) => {
+        if (method === "eth_requestAccounts") return ["0x3333333333333333333333333333333333333333"];
+        if (method === "wallet_switchEthereumChain") return null;
+        if (method === "eth_chainId") return "0xa869";
+        throw new Error(`unexpected MetaMask method: ${method}`);
+      }),
+    } as unknown as EIP1193Provider;
+    Object.defineProperty(window, "ethereum", { configurable: true, value: provider });
+
+    const client = await createBrowserChargeClient();
+    await client.connectWallet();
+
+    expect(provider.request).toHaveBeenCalledWith({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0xa869" }],
+    });
   });
 
   it("requests the Driver account before asking MetaMask to switch networks", async () => {

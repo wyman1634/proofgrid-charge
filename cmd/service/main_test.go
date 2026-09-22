@@ -44,6 +44,19 @@ func TestHealthEndpointReportsTheGoServiceIsReady(t *testing.T) {
 	}
 }
 
+func TestServiceAddressPrefersExplicitAddressThenPlatformPort(t *testing.T) {
+	t.Setenv("PROOFGRID_SERVICE_ADDRESS", "")
+	t.Setenv("PORT", "10000")
+	if got := serviceAddress(); got != ":10000" {
+		t.Fatalf("expected platform port, got %q", got)
+	}
+
+	t.Setenv("PROOFGRID_SERVICE_ADDRESS", ":8080")
+	if got := serviceAddress(); got != ":8080" {
+		t.Fatalf("expected explicit service address, got %q", got)
+	}
+}
+
 func TestAttestationEndpointDerivesCanonicalRawChargingData(t *testing.T) {
 	t.Setenv("PROOFGRID_ATTESTOR_PRIVATE_KEY", testAttestorPrivateKey)
 	response := httptest.NewRecorder()
@@ -70,6 +83,48 @@ func TestAttestationEndpointDerivesCanonicalRawChargingData(t *testing.T) {
 	}
 	if body.EvidenceHash != "0xae0e81125c11345eae1bb86753d3755e71479b2e74a0d86b21d8a6aa2896a3d2" {
 		t.Fatalf("expected independently reproducible Evidence Hash, got %q", body.EvidenceHash)
+	}
+}
+
+func TestAttestationEndpointDoesNotTrustClientMeterValues(t *testing.T) {
+	t.Setenv("PROOFGRID_ATTESTOR_PRIVATE_KEY", testAttestorPrivateKey)
+	request := httptest.NewRequest(http.MethodPost, "/attestations", bytes.NewBufferString(`{
+		"sessionId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"stationId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"chargingOperator":"0x1111111111111111111111111111111111111111",
+		"rawChargingData":{"sessionId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","stationId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","meterStartWh":1,"meterEndWh":2},
+		"expiry":1789635600,"chainId":31337,"verifyingContract":"0x2222222222222222222222222222222222222222"
+	}`))
+	response := httptest.NewRecorder()
+
+	newHandler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, response.Code, response.Body.String())
+	}
+	var body struct {
+		ActualEnergyWh uint64 `json:"actualEnergyWh"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.ActualEnergyWh != demoMeterEndWh-demoMeterStartWh {
+		t.Fatalf("expected server-generated Actual Energy, got %d", body.ActualEnergyWh)
+	}
+}
+
+func TestFujiAttestorRejectsUnconfiguredContract(t *testing.T) {
+	t.Setenv("PROOFGRID_ATTESTOR_PRIVATE_KEY", testAttestorPrivateKey)
+	t.Setenv("PROOFGRID_DEPLOYMENT_MODE", "fuji")
+	t.Setenv("PROOFGRID_VERIFYING_CONTRACT", "0x3333333333333333333333333333333333333333")
+	t.Setenv("PROOFGRID_STATION_ID", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	t.Setenv("PROOFGRID_CHARGING_OPERATOR", "0x1111111111111111111111111111111111111111")
+	response := httptest.NewRecorder()
+
+	newHandler().ServeHTTP(response, newAttestationHTTPRequest())
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusForbidden, response.Code, response.Body.String())
 	}
 }
 

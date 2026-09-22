@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: proofgrid-charge-attestor
+    runtime: docker
+    healthCheckPath: /healthz
+    envVars:
+      - key: PROOFGRID_DEPLOYMENT_MODE
+        value: fuji
+      - key: PROOFGRID_ATTESTOR_PRIVATE_KEY
+        sync: false
+      - key: PROOFGRID_VERIFYING_CONTRACT
+        value: "0x0000000000000000000000000000000000000000"
+      - key: PROOFGRID_STATION_ID
+        value: "0x0000000000000000000000000000000000000000000000000000000000000000"
+      - key: PROOFGRID_CHARGING_OPERATOR
+        value: "0x0000000000000000000000000000000000000000"
