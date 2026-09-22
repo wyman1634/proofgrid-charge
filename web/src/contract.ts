@@ -13,6 +13,28 @@ import {
 import { localhost } from "viem/chains";
 import type { ChargeClient, CreateSessionRequest, FundedSession, SettlementScenario } from "./ChargingSessionPage";
 
+const chargingSessionSettledEvent = {
+  type: "event",
+  name: "ChargingSessionSettled",
+  inputs: [
+    { name: "sessionId", type: "bytes32", indexed: true },
+    { name: "relayer", type: "address", indexed: true },
+    { name: "actualPayment", type: "uint256", indexed: false },
+    { name: "driverRefund", type: "uint256", indexed: false },
+    { name: "evidenceHash", type: "bytes32", indexed: false },
+  ],
+} as const;
+
+const chargingSessionRefundedEvent = {
+  type: "event",
+  name: "ChargingSessionRefunded",
+  inputs: [
+    { name: "sessionId", type: "bytes32", indexed: true },
+    { name: "driver", type: "address", indexed: true },
+    { name: "maximumPayment", type: "uint256", indexed: false },
+  ],
+} as const;
+
 const abi = [
   { type: "error", name: "UnknownChargingStation", inputs: [] },
   { type: "error", name: "InactiveChargingStation", inputs: [] },
@@ -35,26 +57,8 @@ const abi = [
   { type: "error", name: "InvalidAttestation", inputs: [] },
   { type: "error", name: "ExpiredAttestation", inputs: [] },
   { type: "error", name: "InvalidActualEnergy", inputs: [] },
-  {
-    type: "event",
-    name: "ChargingSessionSettled",
-    inputs: [
-      { name: "sessionId", type: "bytes32", indexed: true },
-      { name: "relayer", type: "address", indexed: true },
-      { name: "actualPayment", type: "uint256", indexed: false },
-      { name: "driverRefund", type: "uint256", indexed: false },
-      { name: "evidenceHash", type: "bytes32", indexed: false },
-    ],
-  },
-  {
-    type: "event",
-    name: "ChargingSessionRefunded",
-    inputs: [
-      { name: "sessionId", type: "bytes32", indexed: true },
-      { name: "driver", type: "address", indexed: true },
-      { name: "maximumPayment", type: "uint256", indexed: false },
-    ],
-  },
+  chargingSessionSettledEvent,
+  chargingSessionRefundedEvent,
   {
     type: "function",
     name: "getChargingStation",
@@ -307,7 +311,7 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
       if (session[8] === 3) {
         const logs = await publicClient.getLogs({
           address: deployment.contractAddress,
-          event: abi[15],
+          event: chargingSessionRefundedEvent,
           args: { sessionId: keccak256(toBytes(sessionName)) },
           fromBlock: 0n,
         });
@@ -327,15 +331,17 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
       });
       const rawResponse = await fetch(`${deployment.attestorUrl ?? "http://127.0.0.1:8080"}/records/${keccak256(toBytes(sessionName))}`);
       const rawChargingData = rawResponse.ok ? await rawResponse.text() : "原始充电记录暂不可用";
+      const settlementHash = (await publicClient.getLogs({
+        address: deployment.contractAddress,
+        event: chargingSessionSettledEvent,
+        args: { sessionId: keccak256(toBytes(sessionName)) },
+        fromBlock: 0n,
+      })).at(-1)?.transactionHash;
       return {
         ...fundedSession,
         state: "Settled" as const,
-        settlementHash: (await publicClient.getLogs({
-          address: deployment.contractAddress,
-          event: abi[14],
-          args: { sessionId: keccak256(toBytes(sessionName)) },
-          fromBlock: 0n,
-        })).at(-1)?.transactionHash ?? "链上查询未提供结算交易哈希",
+        settlementHash: settlementHash ?? "链上查询未提供结算交易哈希",
+        transactionUrl: settlementHash ? transactionUrl(deployment.chainId, settlementHash) : undefined,
         rawChargingData,
         evidenceHash: receipt[8],
         actualEnergyWh: receipt[5],

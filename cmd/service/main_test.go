@@ -73,6 +73,27 @@ func TestAttestationEndpointDerivesCanonicalRawChargingData(t *testing.T) {
 	}
 }
 
+func TestRecordEndpointReturnsTheExactAttestedRawChargingData(t *testing.T) {
+	t.Setenv("PROOFGRID_ATTESTOR_PRIVATE_KEY", testAttestorPrivateKey)
+	handler := newHandler()
+	attestationResponse := httptest.NewRecorder()
+
+	handler.ServeHTTP(attestationResponse, newAttestationHTTPRequest())
+	if attestationResponse.Code != http.StatusOK {
+		t.Fatalf("attest record: expected status %d, got %d: %s", http.StatusOK, attestationResponse.Code, attestationResponse.Body.String())
+	}
+
+	recordResponse := httptest.NewRecorder()
+	handler.ServeHTTP(recordResponse, httptest.NewRequest(http.MethodGet, "/records/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil))
+	if recordResponse.Code != http.StatusOK {
+		t.Fatalf("get record: expected status %d, got %d: %s", http.StatusOK, recordResponse.Code, recordResponse.Body.String())
+	}
+	const expected = `{"sessionId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","stationId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","meterStartWh":120000,"meterEndWh":138400}`
+	if got := recordResponse.Body.String(); got != expected {
+		t.Fatalf("expected exact attested raw data %q, got %q", expected, got)
+	}
+}
+
 func TestAttestationEndpointSignsTheEIP712ChargingAttestation(t *testing.T) {
 	t.Setenv("PROOFGRID_ATTESTOR_PRIVATE_KEY", testAttestorPrivateKey)
 	response := httptest.NewRecorder()
