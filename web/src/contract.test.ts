@@ -294,6 +294,62 @@ describe("browser contract client", () => {
     ).rejects.toThrow("Charging Session 已完成结算，不能重复提交");
   });
 
+  it("caps simulated Charging Attestation energy at the Driver's authorized maximum", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes("/attestations")) {
+        const rawChargingData = JSON.parse(String(init?.body)).rawChargingData;
+        expect(rawChargingData).toMatchObject({ meterStartWh: 120_000, meterEndWh: 121_000 });
+        return new Response(
+          JSON.stringify({
+            rawChargingData: JSON.stringify(rawChargingData),
+            evidenceHash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+            actualEnergyWh: 1_000,
+            attestation: { expiry: 1_789_635_600 },
+            signature: "0x",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          chainId: 1_337,
+          contractAddress: "0x1111111111111111111111111111111111111111",
+          rpcUrl: "http://127.0.0.1:8545",
+          stationId: "station-fuji-001",
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = {
+      async request({ method }: { method: string }) {
+        if (method === "wallet_switchEthereumChain") return null;
+        if (method === "eth_chainId") return "0x539";
+        if (method === "eth_requestAccounts") return ["0x3333333333333333333333333333333333333333"];
+        if (method === "eth_sendTransaction") throw new Error("stop after attestation request");
+        throw new Error(`unexpected MetaMask method: ${method}`);
+      },
+    } as unknown as EIP1193Provider;
+    Object.defineProperty(window, "ethereum", { configurable: true, value: provider });
+
+    const client = await createBrowserChargeClient();
+    await client.connectWallet();
+
+    await expect(client.settleSession({
+      hash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+      state: "Funded",
+      driver: "0x3333333333333333333333333333333333333333",
+      sessionId: "small-authorization",
+      stationId: "station-fuji-001",
+      operator: "0x2222222222222222222222222222222222222222",
+      attestor: "0x4444444444444444444444444444444444444444",
+      tariff: 1_000n,
+      maxEnergyWh: 1_000n,
+      maximumPayment: 1_000_000n,
+      deadline: 1_789_635_600n,
+    })).rejects.toThrow("stop after attestation request");
+  });
+
   it("translates a premature Timeout Refund into a Driver-readable reason", async () => {
     vi.stubGlobal(
       "fetch",

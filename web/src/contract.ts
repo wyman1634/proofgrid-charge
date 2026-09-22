@@ -444,6 +444,9 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
       const walletClient = createWalletClient({ chain: proofGridLocal, transport: custom(walletProvider) });
       const sessionId = keccak256(toBytes(session.sessionId));
       try {
+        const simulatedActualEnergyWh = session.maxEnergyWh < 18_400n
+          ? session.maxEnergyWh
+          : 18_400n;
         const expiry = scenario === "expiredAttestation"
           ? Math.floor(Date.now() / 1_000) - 1
           : Math.floor(Date.now() / 1_000) + 30 * 60;
@@ -460,7 +463,7 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
                 sessionId,
                 stationId: keccak256(toBytes(session.stationId)),
                 meterStartWh: 120_000,
-                meterEndWh: 138_400,
+                meterEndWh: 120_000 + Number(simulatedActualEnergyWh),
               },
               expiry,
               chainId: deployment.chainId,
