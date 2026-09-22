@@ -36,6 +36,26 @@ const abi = [
   { type: "error", name: "ExpiredAttestation", inputs: [] },
   { type: "error", name: "InvalidActualEnergy", inputs: [] },
   {
+    type: "event",
+    name: "ChargingSessionSettled",
+    inputs: [
+      { name: "sessionId", type: "bytes32", indexed: true },
+      { name: "relayer", type: "address", indexed: true },
+      { name: "actualPayment", type: "uint256", indexed: false },
+      { name: "driverRefund", type: "uint256", indexed: false },
+      { name: "evidenceHash", type: "bytes32", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "ChargingSessionRefunded",
+    inputs: [
+      { name: "sessionId", type: "bytes32", indexed: true },
+      { name: "driver", type: "address", indexed: true },
+      { name: "maximumPayment", type: "uint256", indexed: false },
+    ],
+  },
+  {
     type: "function",
     name: "getChargingStation",
     stateMutability: "view",
@@ -139,6 +159,10 @@ const proofGridLocal = {
   ...localhost,
   nativeCurrency: { name: "Test AVAX", symbol: "AVAX", decimals: 18 },
 };
+
+function transactionUrl(chainId: number, hash: Hex) {
+  return chainId === 43_113 ? `https://testnet.snowtrace.io/tx/${hash}` : undefined;
+}
 
 type InjectedProvider = EIP1193Provider & {
   isMetaMask?: boolean;
@@ -281,7 +305,19 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
       };
       if (session[8] === 1) return { ...fundedSession, state: "Funded" as const };
       if (session[8] === 3) {
-        return { ...fundedSession, state: "Refunded" as const, refundHash: "链上查询未提供退款交易哈希" };
+        const logs = await publicClient.getLogs({
+          address: deployment.contractAddress,
+          event: abi[15],
+          args: { sessionId: keccak256(toBytes(sessionName)) },
+          fromBlock: 0n,
+        });
+        const hash = logs.at(-1)?.transactionHash;
+        return {
+          ...fundedSession,
+          state: "Refunded" as const,
+          refundHash: hash ?? "链上查询未提供退款交易哈希",
+          transactionUrl: hash ? transactionUrl(deployment.chainId, hash) : undefined,
+        };
       }
       const receipt = await publicClient.readContract({
         address: deployment.contractAddress,
@@ -289,16 +325,17 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
         functionName: "getChargingReceipt",
         args: [keccak256(toBytes(sessionName))],
       });
-      const rawChargingData = JSON.stringify({
-        sessionId: keccak256(toBytes(sessionName)),
-        stationId: session[1],
-        meterStartWh: 120_000,
-        meterEndWh: 138_400,
-      });
+      const rawResponse = await fetch(`${deployment.attestorUrl ?? "http://127.0.0.1:8080"}/records/${keccak256(toBytes(sessionName))}`);
+      const rawChargingData = rawResponse.ok ? await rawResponse.text() : "原始充电记录暂不可用";
       return {
         ...fundedSession,
         state: "Settled" as const,
-        settlementHash: "链上查询未提供结算交易哈希",
+        settlementHash: (await publicClient.getLogs({
+          address: deployment.contractAddress,
+          event: abi[14],
+          args: { sessionId: keccak256(toBytes(sessionName)) },
+          fromBlock: 0n,
+        })).at(-1)?.transactionHash ?? "链上查询未提供结算交易哈希",
         rawChargingData,
         evidenceHash: receipt[8],
         actualEnergyWh: receipt[5],
@@ -306,7 +343,7 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
         driverRefund: receipt[7],
         relayer: receipt[9],
         settledAt: receipt[10],
-        evidenceHashMatches: keccak256(toBytes(rawChargingData)) === receipt[8],
+        evidenceHashMatches: rawResponse.ok ? keccak256(toBytes(rawChargingData)) === receipt[8] : undefined,
       };
     },
 

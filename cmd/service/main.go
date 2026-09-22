@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -107,6 +108,8 @@ func signAttestation(input attestationRequest, attestation chargingAttestation) 
 
 func newHandler() http.Handler {
 	mux := http.NewServeMux()
+	var recordsMu sync.RWMutex
+	records := make(map[string]string)
 	mux.HandleFunc("GET /healthz", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(response).Encode(map[string]string{"status": "ok"}); err != nil {
@@ -138,6 +141,9 @@ func newHandler() http.Handler {
 			return
 		}
 		evidenceHash := keccak256Hex(canonicalChargingData)
+		recordsMu.Lock()
+		records[input.SessionID] = string(canonicalChargingData)
+		recordsMu.Unlock()
 		attestation := chargingAttestation{
 			SessionID: input.SessionID, StationID: input.StationID,
 			ChargingOperator: input.ChargingOperator,
@@ -156,6 +162,18 @@ func newHandler() http.Handler {
 		}); err != nil {
 			http.Error(response, "failed to encode response", http.StatusInternalServerError)
 		}
+	})
+	mux.HandleFunc("GET /records/", func(response http.ResponseWriter, request *http.Request) {
+		sessionID := strings.TrimPrefix(request.URL.Path, "/records/")
+		recordsMu.RLock()
+		record, found := records[sessionID]
+		recordsMu.RUnlock()
+		if !found {
+			http.Error(response, "raw charging record not found", http.StatusNotFound)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(record))
 	})
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Access-Control-Allow-Origin", "*")

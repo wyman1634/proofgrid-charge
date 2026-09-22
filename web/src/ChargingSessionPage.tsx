@@ -36,11 +36,13 @@ export type SettledSession = Omit<FundedSession, "state"> & {
   relayer: string;
   settledAt: bigint;
   evidenceHashMatches?: boolean;
+  transactionUrl?: string;
 };
 
 export type RefundedSession = Omit<FundedSession, "state"> & {
   state: "Refunded";
   refundHash: string;
+  transactionUrl?: string;
 };
 
 export type SettlementScenario =
@@ -255,7 +257,9 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
           <h2>{result.state}</h2>
           <p>
             {result.state === "Settled" ? "Settlement 交易哈希" : result.state === "Refunded" ? "Timeout Refund 交易哈希" : "创建交易哈希"}
-            {" "}<code>{result.state === "Settled" ? result.settlementHash : result.state === "Refunded" ? result.refundHash : result.hash}</code>
+            {" "}{result.state !== "Funded" && result.transactionUrl ? (
+              <a href={result.transactionUrl} target="_blank" rel="noreferrer">查看交易</a>
+            ) : <code>{result.state === "Settled" ? result.settlementHash : result.state === "Refunded" ? result.refundHash : result.hash}</code>}
           </p>
           <h3>链上锁定条款</h3>
           <dl>
