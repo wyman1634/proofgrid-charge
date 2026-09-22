@@ -189,73 +189,90 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
   const refundAvailable = chainTimestamp !== undefined && chainTimestamp > (result?.deadline ?? 0n);
 
   if (!station) {
-    return <main>{error ? <p role="alert">{error}</p> : <p>正在加载 Charging Station…</p>}</main>;
+    return <main className="loading-screen">{error ? <p role="alert">{error}</p> : <p>正在加载 Charging Station…</p>}</main>;
   }
 
   return (
-    <main>
-      <header>
-        <p>ProofGrid Charge</p>
-        <h1>创建并出资 Charging Session</h1>
+    <main className="app-shell">
+      <header className="site-header">
+        <a className="brand" href="#top" aria-label="ProofGrid Charge 首页">
+          <span className="brand-mark">P</span>
+          <span>ProofGrid <em>Charge</em></span>
+        </a>
+        <p className="network-status"><span /> Avalanche Fuji · 43113</p>
       </header>
 
-      <section aria-labelledby="station-heading">
-        <h2 id="station-heading">Charging Station</h2>
-        <dl>
-          <div><dt>Station</dt><dd>{station.id}</dd></div>
-          <div><dt>Charging Operator</dt><dd>{station.operator}</dd></div>
-          <div><dt>Attestor</dt><dd>{station.attestor}</dd></div>
-          <div><dt>Tariff</dt><dd>{station.tariff.toLocaleString("en-US")} wei / Wh</dd></div>
-          <div><dt>状态</dt><dd>{station.active ? "Active" : "Inactive"}</dd></div>
-        </dl>
-      </section>
+      <div className="experience-grid" id="top">
+        <aside className="flow-rail" aria-label="Charging Session 流程">
+          <p className="rail-eyebrow">Guided transaction</p>
+          <h2>把一次充电，变成可核验的结算。</h2>
+          <ol className="flow-steps">
+            <li className={!result ? "is-active" : "is-complete"}><span>01</span><div><strong>Authorize</strong><small>锁定 Maximum Payment</small></div></li>
+            <li className={result?.state === "Funded" ? "is-active" : result ? "is-complete" : ""}><span>02</span><div><strong>Charge</strong><small>Attestor 签发数据</small></div></li>
+            <li className={result?.state === "Settled" ? "is-active is-complete" : ""}><span>03</span><div><strong>Settle</strong><small>生成公开 Receipt</small></div></li>
+          </ol>
+          <div className="rail-note"><span>↗</span><p>付款上限、费率和截止时间会在链上锁定，结算只按 Charging Receipt 执行。</p></div>
+        </aside>
 
-      <form onSubmit={submit}>
-        <label>
-          Charging Session ID
-          <input required value={sessionId} onChange={(event) => setSessionId(event.target.value)} />
-        </label>
-        <label>
-          最大授权电量 (Wh)
-          <input
-            type="number"
-            min="1"
-            required
-            value={maxEnergyWh}
-            onChange={(event) => setMaxEnergyWh(event.target.value)}
-          />
-        </label>
-        <label>
-          截止时间
-          <input
-            type="datetime-local"
-            required
-            value={deadline}
-            onChange={(event) => setDeadline(event.target.value)}
-          />
-        </label>
-        <p>Maximum Payment <strong>{maximumPayment.toLocaleString("en-US")} wei</strong></p>
-        {!wallet ? (
-          <button type="button" onClick={connect}>连接钱包</button>
-        ) : (
-          <>
-            <p>Driver {wallet}</p>
-            <button type="submit" disabled={submitting || !station.active}>
-              {submitting ? "提交中…" : "准确出资并创建"}
-            </button>
-          </>
-        )}
-      </form>
+        <div className="workspace">
+          <header className="hero">
+            <p className="eyebrow">Proof of charge · on Avalanche</p>
+            <h1>创建并出资 <span>Charging Session</span></h1>
+            <p>先明确你愿意承担的最大费用；充电完成后，由可验证的 Attestation 触发结算。</p>
+          </header>
 
-      <button type="button" onClick={lookup} disabled={!sessionId}>
-        查询链上状态
-      </button>
+          <section className="station-card" aria-labelledby="station-heading">
+            <div className="section-heading"><div><p className="eyebrow">Destination</p><h2 id="station-heading">Charging Station</h2></div><span className={`status-pill ${station.active ? "is-active" : ""}`}>{station.active ? "● Active" : "● Inactive"}</span></div>
+            <dl>
+              <div><dt>Station</dt><dd>{station.id}</dd></div>
+              <div><dt>Charging Operator</dt><dd>{station.operator}</dd></div>
+              <div><dt>Attestor</dt><dd>{station.attestor}</dd></div>
+              <div><dt>Tariff</dt><dd>{station.tariff.toLocaleString("en-US")} wei / Wh</dd></div>
+              <div><dt>状态</dt><dd>{station.active ? "Active" : "Inactive"}</dd></div>
+            </dl>
+          </section>
 
-      {error && <p role="alert">{error}</p>}
-      {result && (
-        <section aria-label="Charging Session 结果">
-          <h2>{result.state}</h2>
-          <p>
+          <section className="funding-card" aria-labelledby="funding-heading">
+            <div className="section-heading"><div><p className="eyebrow">Step 01</p><h2 id="funding-heading">设定授权上限</h2></div><p className="secure-label">⟡ Contract enforced</p></div>
+            <form onSubmit={submit}>
+              <div className="form-grid">
+                <label className="field-wide">
+                  Charging Session ID
+                  <input required placeholder="例如：fuji-session-001" value={sessionId} onChange={(event) => setSessionId(event.target.value)} />
+                </label>
+                <label>
+                  最大授权电量 (Wh)
+                  <input type="number" min="1" required value={maxEnergyWh} onChange={(event) => setMaxEnergyWh(event.target.value)} />
+                </label>
+                <label>
+                  截止时间
+                  <input type="datetime-local" required value={deadline} onChange={(event) => setDeadline(event.target.value)} />
+                </label>
+              </div>
+              <div className="payment-summary"><span>Maximum Payment</span><strong>{maximumPayment.toLocaleString("en-US")} wei</strong><span className="payment-lock">锁定上限</span></div>
+              {!wallet ? (
+                <button className="primary-action" type="button" onClick={connect}>连接钱包 <span aria-hidden="true">→</span></button>
+              ) : (
+                <div className="wallet-action"><p>Driver <code>{wallet}</code></p><button className="primary-action" type="submit" disabled={submitting || !station.active}>{submitting ? "提交中…" : <>准确出资并创建 <span aria-hidden="true">→</span></>}</button></div>
+              )}
+            </form>
+          </section>
+
+          <section className="lookup-card" aria-labelledby="lookup-heading">
+            <div>
+              <p className="eyebrow">Existing session</p>
+              <h2 id="lookup-heading">已有 Charging Session？</h2>
+              <p>输入已有的 Session ID 后，读取链上锁定条款、结算状态和公开 Charging Receipt。</p>
+            </div>
+            <button className="lookup-button" type="button" onClick={lookup} disabled={!sessionId}>查询链上状态 <span aria-hidden="true">↗</span></button>
+          </section>
+
+          {error && <p role="alert">{error}</p>}
+          {result && (
+        <section className="result-card" aria-label="Charging Session 结果">
+          <div className="result-heading"><div><p className="eyebrow">On-chain outcome</p><h2>{result.state}</h2></div><span className={`status-pill ${result.state === "Funded" || result.state === "Settled" ? "is-active" : ""}`}>● {result.state}</span></div>
+          {result.state === "Settled" && <p className="receipt-confirmation">✓ 链上回执已确认</p>}
+          <p className="transaction-line">
             {result.state === "Settled" ? "Settlement 交易哈希" : result.state === "Refunded" ? "Timeout Refund 交易哈希" : "创建交易哈希"}
             {" "}{result.state !== "Funded" && result.transactionUrl ? (
               <a href={result.transactionUrl} target="_blank" rel="noreferrer">查看交易</a>
@@ -287,11 +304,11 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
                   <option value="expiredAttestation">过期 Charging Attestation</option>
                 </select>
               </label>
-              <button type="button" disabled={settling} onClick={settle}>
+              <button className="primary-action" type="button" disabled={settling} onClick={settle}>
                 {settling ? "结算中…" : "模拟并结算"}
               </button>
               {refundAvailable ? (
-                <button type="button" disabled={refunding} onClick={refund}>
+                <button className="refund-button" type="button" disabled={refunding} onClick={refund}>
                   {refunding ? "退款中…" : "发起 Timeout Refund"}
                 </button>
               ) : (
@@ -321,8 +338,10 @@ export function ChargingSessionPage({ client, now = () => new Date() }: Props) {
           ) : (
             <p>全部 Maximum Payment 已退回 Driver；该 Charging Session 未生成 Charging Receipt。</p>
           )}
-        </section>
-      )}
+            </section>
+          )}
+        </div>
+      </div>
     </main>
   );
 }

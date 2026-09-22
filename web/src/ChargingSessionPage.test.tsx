@@ -165,6 +165,7 @@ describe("Charging Session product interface", () => {
 
     const resultRegion = await screen.findByRole("region", { name: "Charging Session 结果" });
     expect(within(resultRegion).getByRole("heading", { name: "Settled" })).toBeVisible();
+    expect(within(resultRegion).getByText(/链上回执已确认/)).toBeVisible();
     expect(within(resultRegion).getByText("18,400 Wh")).toBeVisible();
     expect(within(resultRegion).getByText("18,400,000 wei")).toBeVisible();
     expect(within(resultRegion).getByText("1,600,000 wei")).toBeVisible();

@@ -418,7 +418,8 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
           ],
           value: request.maximumPayment,
         });
-        await publicClient.waitForTransactionReceipt({ hash });
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") throw new Error("创建交易在链上执行失败");
         const session = await publicClient.readContract({
           address: deployment.contractAddress,
           abi,
@@ -498,7 +499,8 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
             signed.signature,
           ],
         });
-        await publicClient.waitForTransactionReceipt({ hash: settlementHash });
+        const transactionReceipt = await publicClient.waitForTransactionReceipt({ hash: settlementHash });
+        if (transactionReceipt.status !== "success") throw new Error("结算交易在链上执行失败");
         const [chainSession, receipt] = await Promise.all([
           publicClient.readContract({
             address: deployment.contractAddress,
@@ -542,7 +544,8 @@ export async function createBrowserChargeClient(): Promise<ChargeClient> {
           functionName: "timeoutRefund",
           args: [keccak256(toBytes(session.sessionId))],
         });
-        await publicClient.waitForTransactionReceipt({ hash });
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") throw new Error("Timeout Refund 交易在链上执行失败");
         const chainSession = await publicClient.readContract({
           address: deployment.contractAddress,
           abi,
