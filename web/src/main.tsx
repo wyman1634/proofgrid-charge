@@ -1,12 +1,16 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ChargingSessionPage } from "./ChargingSessionPage";
+import { ChargingSessionPrototype } from "./ChargingSessionPrototype";
 import { createBrowserChargeClient } from "./contract";
 import "./styles.css";
 
 const root = createRoot(document.getElementById("root")!);
+const prototype = process.env.NODE_ENV !== "production" && new URLSearchParams(window.location.search).has("prototype");
 
-createBrowserChargeClient()
+if (prototype) {
+  root.render(<ChargingSessionPrototype />);
+} else createBrowserChargeClient()
   .then((client) => {
     root.render(
       <StrictMode>
